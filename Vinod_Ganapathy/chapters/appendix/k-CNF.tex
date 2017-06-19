@@ -1,0 +1,96 @@
+\chapter{\textsf{\kcnf\ SET EQUATION} is NP-Complete}
+\label{chapter:appendix:k-cnf}
+
+We show that the \kcnfse\ problem that was introduced in
+\chapref{chapter:dynamic} is NP-complete. 
+
+\begin{definition}[\textsf{CNF set equation}]
+%
+A CNF set equation of a set $B$ in terms of a collection of sets $\mathcal{C}$
+is an equation for $B$ in terms of the sets in $\mathcal{C}$ with $\cup$ as the
+disjunction operator, and $\cap$ as the conjunction operator. Each disjunct in
+a CNF set equation is called a \textit{clause}.
+%
+\end{definition}
+
+
+\begin{definition}[The \kcnfse\ problem]
+%
+\textbf{INSTANCE:} Given (i)~a set $S$, (ii)~a set $B~\subseteq~S$, 
+(iii)~a collection $\mathcal{C}$ of subsets of $S$, and (iv)~a positive
+integer $k$.
+%
+\textbf{QUESTION:} Is there a CNF set-equation for $B$ in terms of the
+sets in $\mathcal{C}$ with at most $k$ clauses?
+%
+\end{definition}
+
+We proceed by reduction from the \setcov\ problem, which is known to be
+NP-complete~\cite{garey-johnson}.
+
+
+\begin{definition}[The \setcov\ problem]
+%
+\textbf{INSTANCE:} Given (i)~a set $S$, (ii)~a collection $\mathcal{C}$ of
+subsets of $S$, and (iii)~a positive integer $k$.
+%
+\textbf{QUESTION:} Is there a collection of at most $k$ sets from $\mathcal{C}$ 
+that covers $S$?
+%
+\end{definition}
+
+
+
+\noindent\textbf{Reduction from \setcov:} Choose $k$ elements
+\{$1, 2, \ldots, k$\} that do not belong to the set $S$. Construct
+$B~=~\{1, 2, \ldots, k$\}, and a collection $\mathcal{D}$ from $\mathcal{C}$ as
+follows. Let $\mathcal{C}$~=~\{$C_1, C_2, \ldots, C_n$\}.  Construct
+$\mathcal{D}$~=~\{\{$1$\}$\cup$$\bar{C_1}$, \{$1$\}$\cup$$\bar{C_2}$, $\ldots$,
+\{$1$\}$\cup$$\bar{C_n}$, \{$2$\}$\cup$$\bar{C_1}$, \{$2$\}$\cup$$\bar{C_2}$,
+$\ldots$ \{$2$\}$\cup$$\bar{C_n}$, $\ldots$, \{$k$\}$\cup$$\bar{C_1}$,
+\{$k$\}$\cup$$\bar{C_2}$, $\ldots$, \{$k$\}$\cup$$\bar{C_n}$\}. Here the
+complements are constructed with $S$ as the universal set. Pass $B$,
+$\mathcal{D}$, and $k$ to the oracle that solves \kcnfse\ and ouput ``Yes'' for
+\setcov\ if and only if the oracle \kcnfse\ also returns ``Yes''.  Clearly,
+this reduction is polynomial-time. 
+
+\begin{clm}
+$S$ has a set cover of size $k$ if and only if $B$ has a \kcnf\ set equation in
+terms of $\mathcal{D}$.
+\end{clm}
+
+\noindent\textbf{Proof:}
+($\Rightarrow$) Suppose that $S$ has a set cover of size $k$. Let the cover be
+$S~=~A_1\cup A_2\cup\ldots\cup A_k$ (these sets are elements of the collection
+$\mathcal{C}$). Note that this implies that
+$\phi=\bar{A_1}\cap\bar{A_2}\cap\ldots\cap\bar{A_k}$.
+Consequently, a \kcnf\ set equation for $B$ is $\mathcal{B}$~=~
+((\{$1$\}$\cup$$\bar{A_1}$) $\cup$ (\{$2$\}$\cup$$\bar{A_1}$) $\cup$ $\ldots$
+$\cup$ (\{$k$\}$\cup$$\bar{A_1}$))
+$\cap$
+((\{$1$\}$\cup$$\bar{A_2}$) $\cup$ (\{$2$\}$\cup$$\bar{A_2}$) $\cup$ $\ldots$
+$\cup$ (\{$k$\}$\cup$$\bar{A_2}$))
+$\cap$$\ldots$$\cap$
+((\{$1$\}$\cup$$\bar{A_k}$) $\cup$ (\{$2$\}$\cup$$\bar{A_k}$) $\cup$ $\ldots$
+$\cup$ (\{$k$\}$\cup$$\bar{A_k}$)).
+
+($\Leftarrow$) Suppose that $B$ has a \kcnf\ set equation. Denote this set
+equation by $B~=~B_1\cap B_2\cap\ldots\cap B_k$, where each $B_i$ is a
+disjunction of elements from $\mathcal{D}$. Note that $B$ is a strict subset of
+each of $B_i$ (because the elements $1, 2, \ldots, k$ do not belong to $S$).
+Consider the sets $G_1, \ldots, G_k$, defined as $G_i = B_i - B$. Each of these
+sets $G_i$ is a finite union of complements of sets from $\mathcal{C}$ (because
+of the way $\mathcal{D}$ is constructed). Further
+$\displaystyle\bigcap_{i=1}^{i=k}G_i = \phi$ 
+(because 
+$\displaystyle\bigcap_{i=1}^{i=k}G_i$ = $\displaystyle\bigcap_{i=1}^{i=k}(B_i - B)$ 
+= $\displaystyle\bigcap_{i=1}^{i=k}B_i - B$ = $\phi$).
+This intersection actually looks like 
+$\displaystyle\bigcap_{i=1}^{i=k}(\displaystyle\bigcup_j\bar{C_j}) = \phi$. 
+Taking complement, we have 
+$\displaystyle\bigcup_{i=1}^{i=k}(\displaystyle\bigcap_j C_j) = S$. As a
+result, we have that $S$ = $\displaystyle\bigcup_{i=i}^{i=k}P_i$, where $P_i$
+represents the intersection of a finite number of sets from $\mathcal{C}$.
+Because each of the sets in the intersection contains $P_i$, it suffices to
+arbitrarily choose one of them for each $P_i$ to yield the desired set cover of
+at most size $k$ for $S$. \hfill\fbox{}

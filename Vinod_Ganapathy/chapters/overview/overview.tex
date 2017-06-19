@@ -1,0 +1,712 @@
+\chapter{Overview}
+\label{chapter:overview}
+
+This chapter discusses several assumptions upon which our approach is
+contingent, and presents the formal definition of a reference monitor. It then
+presents a high-level overview of our approach using the \xserver\ as an
+example. It shows how to retrofit the \xserver\ with mechanisms to enforce
+authorization policies on the security-sensitive operations requested by an
+\xclient\ that connects to the \xserver. 
+
+%------------------------------------------------------------------------------
+\section{Goal}
+\label{chapter:overview:goal}
+
+The main questions to be addressed when retrofitting a legacy server are
+\textit{what are the security-sensitive operations to be mediated?}, \ie~what
+are the primitive operations on critical server resources, and \textit{ where
+in the server's source code are these operations performed?} The idea is that
+once these locations are identified, authorization policy lookups can be added
+to the server code so as to completely mediate security-sensitive operations.
+The techniques developed in this dissertation assist with (1)~the
+identification of resource accesses that constitute security-sensitive
+operations, (2)~identification of locations in server code where these
+security-sensitive operations are performed, and (3)~instrumentation of these
+locations, such that the operation is performed only if allowed by an
+authorization policy. 
+
+%------------------------------------------------------------------------------
+\section{Assumptions}
+\label{chapter:overview:assumptions}
+
+We assume the traditional client/server model, where the server manages
+resources on behalf of its clients. Clients connect to the server to request
+operations to be performed on these resources. The server in turn must be
+equipped with mechanisms to mediate accesses to these resources and ensure that
+the requested operations are allowed only if they conform to an authorization
+policy. Our approach retrofits legacy servers with mechanisms for authorization
+policy enforcement. To ensure that our approach can securely enforce
+authorization policies, we make several assumptions about the server.
+
+\subsection*{I: The server is not adversarial}
+%
+We assume that the server itself is benign, \ie~it is not written with
+adversarial intent, and does not actively try to defeat retroactive
+instrumentation. Thus, our approach assumes that the server does not remove or
+modify instrumentation. One way to ensure that a malicious user has not
+modified the server's code to defeat retroactive instrumentation is to have the
+operating system compare a hash of the server's executable against a
+precomputed value as it loads the server for execution. We also require that
+the server be non-self-modifying, to preclude the possibility that
+instrumentation is modified at runtime. One way to enforce this property is to
+make code pages write-protected.
+
+\subsection*{II: The server can defend against control-hijacking exploits}
+%
+Existing vulnerabilities, such as buffer-overflow vulnerabilities, could
+possibly be exploited by a malicious user to bypass our instrumentation.
+Because we cannot hope to eliminate these vulnerabilities statically, we assume
+that the server is protected using techniques such as CCured~\cite{nmw02},
+CFI~\cite{abe+05} or other runtime execution monitoring and sandboxing
+techniques~\cite{fgh+04,fhs+96,lrb+05,sbb+01,wd01}, which terminate execution
+when the behavior of the server differs from its expected behavior.
+
+\subsection*{III: The server's running environment cooperates} 
+%
+The environment that the server runs in must cooperate with it to enforce
+authorization policies, and must not be malicious in intent. In particular, the
+server relies on the operating system to ensure that the authorization policy
+(stored on the file system) is tamper-proof. Moreover, because clients
+typically connect to the server via the operating system, the server relies on
+the operating system for tasks such as authentication and providing
+\textit{security-labels} (\eg~\subjlab{Top-Secret} or \subjlab{Unclassified})
+associated with the clients.  
+
+\subsection*{IV: The server mediates all client communication}
+%
+We assume that clients cannot communicate directly with each other, and that
+their communication is mediated by the server or the operating system.  If
+client communication is mediated by the operating system, then the policy must
+be enforced by the operating system itself. Thus, we restrict ourselves to the
+case where communication is mediated by the server. We also note that if the
+clients communicate via the operating system, they cannot avail themselves of
+server-specific security-sensitive operations, such as cut and paste in the
+case of the \xserver.  Thus our goal is to enforce authorization policies on
+server-specific security-sensitive operations requested by clients.
+
+Finally, we assume that client-server communication is not altered by any
+intervening software layers. For example, most commercial deployments of the
+\xserver\ are accompanied by a \textit{window manager}, (\eg~\texttt{gnome} or
+\texttt{kde}). Because the window manager controls how clients connect to the
+\xserver, it can in theory, alter any information exchanged between the
+\xserver\ and its clients. However, because window managers are few in number
+(unlike \xclients), we assume that they can be verified to satisfy the above
+assumption (though we have not done so).  Further, the operating system can
+ensure that only certified window managers are allowed to run with the
+\xserver.
+
+%------------------------------------------------------------------------------
+\section{A note about the trusted computing base}
+\label{chapter:overview:tcb}
+%
+The trusted computing base (TCB)~\cite{tcsec} of a computer system is defined
+as the set of all protection mechanisms, including hardware and software, that
+are needed to enforce a security policy. Researchers have historically
+advocated that TCB should be as small as possible to ensure that it is amenable
+to thorough verification and code audits. On most commercial systems, however,
+the TCB typically includes the hardware as well as the entire operating system.
+
+The assumptions in \sectref{chapter:overview:assumptions} imply that in our
+approach the server to be retrofitted is also included in the TCB. This,
+unfortunately, is a drawback of our approach. The main reason that the
+application must be included in the TCB is to ensure that instrumentation added
+to enforce authorization policies is not bypassed. There are, however, several
+ways to reduce the size of the TCB. 
+
+One way to remove the retrofitted server from the TCB is to ensure protection
+against common vulnerabilities that can be exploited to bypass our
+instrumentation. While it would be unrealistic to assume that the server is
+vulnerability-free, additional protection mechanisms, \eg~CCured or other
+sandboxing techniques, can ensure that the server is secure against most common
+control-hijacking exploits. In this case, it suffices to ensure that the
+operating system is in the TCB. The operating system bootstraps security by
+ensuring that the instrumentation inserted in the server is not tampered with.
+Clients need not be trusted, and could be malicious. Client security
+information, in particular, a client's security-label, is bootstrapped by the
+operating system during client connection, and is stored within the server.
+Clients thus cannot tamper with their security information after connection has
+been established. 
+
+Further reducing the size of the TCB is a topic for future investigation. For
+example, one approach is to leverage hardware support in modern commodity
+processors~\cite{mpp+07} to create a secure software stack via code
+attestation.
+
+
+%------------------------------------------------------------------------------
+\section{Basic tools}
+\label{chapter:overview:basictools}
+
+Our approach enforces authorization policies by retrofitting a server to ensure
+that security-sensitive operations requested by clients are mediated and
+approved by an authorization policy. The basic tools used to do so are a
+reference monitor and an enforcer~\cite{a72}.
+
+An authorization policy is defined as a set of triples
+\triple{\textit{sub}}{\textit{obj}}{\textit{op}}, where each triple denotes
+that the subject \textit{sub} is allowed to perform a security-sensitive
+operation \textit{op} on an object \textit{obj}. Subjects and objects are often
+associated with \textit{security-labels}; for instance, all top-secret
+documents may have the security-label \subjlab{Top-Secret}. Authorization
+policies are often represented using the security-labels of subjects and
+objects, rather than the subjects and objects themselves.
+
+A reference monitor is defined as a quadruple
+\quadruple{\events}{\state}{\update}{\return}, and is parameterized by an
+authorization policy \policy, where: 
+
+\begin{itemize}
+%
+\item \events\ is a set of \textit{security events}, where each security event
+is a triple \triple{\textit{sub}}{\textit{obj}}{\textit{op}};
+%
+\item \state\ is the \textit{state} of the reference monitor, and is a set
+storing current associations of security-labels with subjects and objects;
+%
+\item \update:~\events~$\times$~\state~$\times$~\policy~$\rightarrow$~\state\
+is a \textit{state update} function, which denotes how subject and object
+security-labels change in response to policy decisions;
+%
+\item
+\return:~\events~$\times$~\state~$\times$~\policy~$\rightarrow$~\pred{Bool} is
+a \textit{policy consulter}, which returns \pred{True} if and only if a
+security event is permitted by the reference monitor.  
+%
+\end{itemize}
+
+An \textit{enforcer} observes events in \events\ generated in response to
+client requests, and passes them on to the reference monitor. Any violations of
+the policy, will result in \return\ returning \pred{False}, following which the
+enforcer will take appropriate action.  Enforcing authorization policies
+entails implementing the enforcer and the reference monitor. 
+
+%------------------------------------------------------------------------------
+
+\subsection{The enforcer} 
+\label{chapter:overview:basictools:enforcer}
+%
+An implementation of the enforcer must satisfy two requirements:
+
+\begin{enumerate}
+%
+\item It must monitor all security events generated in response to client
+requests.  To do so, the enforcer must be able to infer the security-sensitive
+operation requested, the security-label of the subject that requests the
+operation (typically the client), and the object upon which the operation is to
+be performed. 
+%
+\item It must take preventive action if a security event results in
+authorization failure. The action may be to terminate the client whose request
+resulted in the authorization failure.  To do so, the enforcer must be able to
+control the execution of clients of the server, or audit the failure
+appropriately.
+%
+\end{enumerate}
+
+\subsection{The reference monitor}
+\label{chapter:overview:basictools:reference-monitor}
+%
+An implementation of the reference monitor must ensure that the state of the
+reference monitor and the authorization policy are tamper-proof. In addition,
+the state of the reference monitor must be updated appropriately in response to
+security events, using \update. Implementing \return\ entails looking up the
+policy, and can be achieved using off-the-shelf policy management libraries,
+such as the \selinux\ policy development toolkit~\cite{tresys1, tresys2}.
+
+
+%------------------------------------------------------------------------------
+\section{Our approach}
+\label{chapter:overview:approach}
+
+This section presents a high-level, informal overview of our approach, and
+describes how we implement the enforcer and the reference monitor. Algorithm
+and system details omitted from this section appear in subsequent chapters. 
+We use a running example, the \xserver, to illustrate the approach.
+
+\subsection{An example: Retrofitting the \xserver}
+\label{chapter:overview:approach:example-xserver}
+
+% The importance of retrofitting the X server, and what work has been done.
+
+The \xserver\ accepts connections from multiple \xclients, and manages
+resources (\eg~windows, buffers) that it offers to these clients.  Thus, it is
+important for the \xserver\ to enforce authorization policies on its \xclients.
+A manual effort to retrofit the \xserver\ with authorization policy enforcement
+mechanisms was initiated by the NSA in early 2003~\cite{ksv03}, and a
+retrofitted version of the \xserver\ was released in 2005~\cite{s05a} (though
+work on this project is still ongoing, as of March 2007~\cite{w07}).
+
+% What we did.
+
+We demonstrate that our techniques can assist with, and potentially reduce the
+turnaround time of efforts to retrofit legacy servers, such as the \xserver.
+Specifically, with our approach, we were able to identify security-sensitive
+locations in the \xserver, and add reference monitoring code, with a few hours
+of manual effort. We ran the retrofitted \xserver\ on a security-enhanced
+operating system (\selinux~\cite{ls01a}), so that \xclients\ have associated
+\textit{security-labels}, such as \subjlab{Top-secret} and
+\subjlab{Unclassified}.  The retrofitted \xserver\ enforced mandatory
+authorization policies on security-sensitive window operations requested by
+\xclients\ based upon their security-labels.
+
+Our approach proceeds in six steps, as shown in \figref{figure:toolsoverview}.
+
+\begin{figure*}[tb!]
+\ifpdf
+\centerline{\includegraphics[keepaspectratio=true,width=6.5in]{figures/pdf/toolsoverview.pdf}}
+\else
+\centerline{\includegraphics[keepaspectratio=true,width=6.5in]{figures/eps/toolsoverview.eps}}
+\fi
+\mycaption{Steps involved in retrofitting a server for authorization policy enforcement.}
+{\label{figure:toolsoverview}}
+\end{figure*}
+
+%%%%%%%%%%%%%%%% STEP 1 %%%%%%%%%%%%%%%%%%%%%%
+
+\subsection{Step 1: Find security-sensitive operations to be protected}
+\label{chapter:overview:approach:step1}
+%
+The first step is to determine the security-sensitive operations to be
+protected. Typically, a design team considers security requirements for the
+server, and determines security-sensitive operations based upon these
+requirements. This approach was followed in the case of the LSM
+framework~\cite{wcs+02} and the \xserver~\cite{ksv03}, where security-sensitive
+operations were identified for kernel resources, and \xserver\ resources,
+respectively. The design team typically considers a wide range of policies to
+be enforced by the server on resource accesses by clients. Because
+security-sensitive operations are typically the granularity at which
+authorization policies are written (a policy \policy\ is a set of triples of
+the form \triple{\textit{sub}$_i$}{\textit{obj}$_i$}{\textit{op}$_i$}), the set
+of operations \{\textit{op}$_i$\} can be identified.
+
+For the material presented in \chapref{chapter:dynamic} (dynamic fingerprint
+mining), we assume that a description of security-sensitive operations is
+available. For instance, in the \xserver\ case study presented in
+\chapref{chapter:dynamic}, we used the set of security-sensitive operations
+that was identified manually by Kilpatrick~\etal~\cite{ksv03}.  This set of
+operations, $59$ in number, considers security-sensitive operations on several
+key \xserver\ resources, including the \code{Client}, \code{Window},
+\code{Font}, \code{Drawable}, \code{Input}, and \code{xEvent} data structures.
+Of these, $22$ security-sensitive operations are for the \code{Window} data
+structure, such as \op{Window\_Create}, \op{Window\_Map}, and
+\op{Window\_Enumerate} (we will denote security-sensitive operations in this
+dissertation using suggestive names, like the ones above). However, only an
+informal description of these security-sensitive operations is provided by
+Kilpatrick~\etal, and a precise code-level description of these operations is
+needed for enforcement.  Step~2 mines code-level descriptions of these
+operations; these code-level descriptions are called \textit{fingerprints}. 
+
+However, a description of security-sensitive operations may not always be
+available, as for instance was the case with the PennMUSH~\cite{games}
+multi-user dungeon, one of the case studies considered in this dissertation.
+Indeed, it can be argued that identifying security-sensitive operations
+requires understanding the source code of the server being protected, which is
+a time-consuming exercise in itself. In such cases, the approach presented
+in \chapref{chapter:static} (static fingerprint mining) can be used.
+
+This approach bypasses the need for a description of security-sensitive
+operations by directly analyzing the source code of the server and mining a set
+of resource accesses that describe how the server responds to client requests.
+In our experience, these resource accesses were also useful as code-level
+descriptions of security-sensitive operations (and are thus fingerprints
+themselves).  \chapref{chapter:static} presents the details of a study where we
+correlated the fingerprints mined by the static approach against
+manually-identified security-sensitive operations for the \ext~file system and
+the \xserver. Thus, the static approach bypasses Step~1, and proceeds directly
+to Step~2. 
+
+%%%%%%%%%%%%%%%% STEP 2 %%%%%%%%%%%%%%%%%%%%%%
+
+\subsection{Step 2: Find fingerprints of security-sensitive operations} 
+\label{chapter:overview:approach:step2}
+%
+The second step identifies fingerprints of security-sensitive operations. As
+described earlier, each security-sensitive operation is characterized by the
+set of resource accesses that are unique to the operation. These resource
+accesses are represented using code patterns (which are expressed as abstract
+syntax trees, or ASTs), and are the fingerprint of the security-sensitive
+operation (a formal definition of fingerprints appears in
+\chapref{chapter:fingerprints}). The dynamic  and static approach differ in
+their approach to fingerprint finding, as described next.
+
+
+\subsubsection{Dynamic fingerprint mining}
+\label{chapter:overview:approach:step2:dynamic}
+%
+The dynamic fingerprint mining approach assumes that a high-level description
+of security-sensitive operations is available. The code patterns that are
+associated with each security-sensitive operation are not known \apriori, and
+the goal of the dynamic fingerprint mining algorithm is to recover this
+association.
+
+Two novel observations help us achieve this goal. The first observation is that
+security-sensitive operations are typically associated with an observable
+change in the state of the system. For example, the security-sensitive
+operations \op{Window\_Create}, \op{Window\_Map} and \op{Window\_Enumerate} of
+the \xserver\ are associated with opening, mapping, and enumerating child
+windows of an \xclient\ window, respectively (the changes visible on the screen
+when these operations happen are the observable changes associated with these
+operations).  Thus, if we induce the server to perform a security-sensitive
+operation, and trace the server as we do so, the code patterns that form the
+fingerprint of the security-sensitive operation \textit{must} be in the trace.
+For example, the function \code{CreateWindow}, which is implemented in the
+\xserver, is responsible for allocating memory and initializing a new window.
+We observed that creating a new window results in a call to this function. As a
+result, the \textit{Call}~\code{CreateWindow} was identified as a fingerprint
+for \op{Window\_Create}.  Note that the high-level descriptions of
+security-sensitive operations that are input to the dynamic mining algorithm
+are used to determine how security-sensitive operations can be induced in the
+system.
+
+However, program traces are typically long, and it is still challenging to
+identify the code patterns that form the fingerprint of a security-sensitive
+operation from several thousand entries in a program trace. Our second
+observation addresses this challenge---to identify the fingerprint of a
+security-sensitive operation, it suffices to compare program traces that
+perform a security-sensitive operation against those that do not.  For example,
+displaying a visible \xclient\ window (\eg~\code{xterm}), which involves
+mapping the window on the screen, is associated with \op{Window\_Map}; closing
+and typing to an \code{xterm} window are not.  Thus, to identify the code
+patterns that characterize to \op{Window\_Map}, it suffices to compare the
+trace generated by opening an \code{xterm} window against the trace generated
+by closing, or typing to the window. Similarly, closing a browser window is
+associated with closing all child windows, which involves
+\op{Window\_Enumerate}, while typing to a window is not.
+
+With these two observations, identifying fingerprints reduces to studying about
+$15$ entries, on average, in a program trace. Using this technique, we
+identified, for example, the fingerprints of \op{Window\_Create} as
+\textit{Call}~\code{CreateWindow}; of \op{Window\_Map} as writes of \code{True}
+to the field \code{mapped} of a variable of type \code{Window} and
+\code{MapNotify} to the field \code{type} of a variable derived from type
+\code{xEvent}; and of \op{Window\_Enumerate} as
+\textit{Read}~\code{WindowPtr->firstChild} and
+\textit{Read}~\code{WindowPtr->nextSib} and \code{WindowPtr $\neq$ 0}, which
+are intuitively performed during linked-list traversal. Note that code patterns
+are expressed at the granularity of reads and writes to individual fields of
+data structures. We discuss the tracing infrastructure, and algorithms to
+compare traces to identify fingerprints in more detail in
+\chapref{chapter:dynamic}.
+
+
+\subsubsection{Static fingerprint mining}
+\label{chapter:overview:approach:step2:static}
+%
+The static fingerprint mining approach overcomes three important limitations of
+the dynamic approach. First, the dynamic approach requires an \apriori\
+description of security-sensitive operations. As described earlier, such
+descriptions may not always be available, as indeed was the case with PennMUSH.
+Second, the dynamic approach requires that an expert induce these
+security-sensitive operations and collect program traces; doing so may be
+tedious and error-prone. Third, because dynamic analysis only explores the code
+paths exercised by the manually-chosen inputs to the server, it will not
+examine the resource accesses in other portions of the server. As a result, the
+set of fingerprints identified will not be complete.
+
+The static approach directly addresses these shortcomings of the dynamic
+approach. In particular, it makes novel use of a hierarchical clustering
+technique called concept analysis~\cite{w82}. The static approach is based upon
+the observation that a client can access server resources only via the server's
+API. For example, \xclients\ can only access \xserver\ resources via the
+X~protocol, which in turn invokes \xserver\ functions from a well-defined API.
+This approach identifies how data structures representing resources
+(\eg~\code{Window}, \code{Font}, \code{xEvent}) are accessed via the API. It
+does so by distilling each statement of source code into a set of
+code patterns, and using concept analysis to cluster these code patterns based
+upon the API functions that they are accessed from. Each of these clusters is
+then output as a candidate fingerprint. 
+
+In our experiments on three real-world systems, namely, the \ext\ file system,
+a subset of the \xserver, and PennMUSH, the static approach reduced the
+analysis of several thousand lines of code to the analysis of under $115$
+candidate fingerprints with fewer than $4$ code patterns each (on average). For
+example, this approach reduced the analysis of PennMUSH, a server with $94,014$
+lines of C code, to the analysis of $38$ candidate fingerprints, with an
+average of $1.42$ code patterns each. In the case of the \ext\ file system and
+the \xserver, we were also able to correlate these candidate fingerprints with
+manually-identified security-sensitive operations (in the LSM project for \ext,
+and in the X11/\selinux\ project for \xserver). For example, in the analysis of
+the \xserver, one of the candidate fingerprints mined by the static approach
+was a write of the value \code{MapNotify} to the field \code{type} of variable
+derived from type \code{xEvent} and the value \code{True} to the field
+\code{mapped} of a variable of type \code{Window}. This fingerprint denotes key
+resource accesses performed when mapping a window to the screen, and is thus
+the fingerprint for the security-sensitive operation \op{Window\_Map}.  Recall
+that the same fingerprint was also identified for \op{Window\_Map} by the
+dynamic approach.
+
+The static approach addresses the shortcomings of the dynamic approach. Concept
+analysis mines candidate fingerprints without the need for an \apriori\
+description of security-sensitive operations or the need to manually induce the
+server to perform security-sensitive operations. Further, because static
+program analysis ensures better coverage than dynamic analysis, the static
+approach can mine more fingerprints than the dynamic approach.
+
+
+%%%%%%%%%%%%%%%% STEP 3 %%%%%%%%%%%%%%%%%%%%%%
+
+\begin{figure}[ht!]
+\begin{center}
+\newsavebox{\mapsubwindows}
+\begin{lrbox}{\mapsubwindows}
+\begin{minipage}[ht]{6in}
+\lstset{
+language=C,
+tabsize=4,
+basicstyle=\ttfamily\footnotesize,
+keywordstyle=\sffamily\bfseries,
+commentstyle=\rmfamily\emph\footnotesize,
+morekeywords={MapSubWindows, MapNotify, TRUE},
+escapeinside={/*@}{@*/}
+}
+\begin{lstlisting}
+/* Implementation of the function MapSubWindows in the /*@ \xserver. @*/ 
+   Several lines of code irrelevant to this example have been omitted */
+
+MapSubWindows(Window *pParent, Client *pClient) {
+    Window *pWin;
+    xEvent event;
+
+    ...
+    pWin = pParent->firstChild;
+    for (; pWin; pWin = pWin->nextSib) {
+        pWin->mapped = TRUE; 
+        ...
+        event.u.u.type = MapNotify; 
+        ...
+    }
+    ...
+}
+\end{lstlisting}
+\end{minipage}
+\end{lrbox}\fbox{\usebox{\mapsubwindows}}
+\end{center}
+\mycaption{\xserver\ function MapSubWindows}
+{\label{figure:mapsubwindows}}
+\end{figure}
+
+\subsection{Step 3: Find all locations that are security-sensitive} 
+\label{chapter:overview:approach:step3}
+%
+The third step uses the fingerprints identified in Step~2 to statically
+identify all locations in the server where code patterns that form the
+fingerprint of a security-sensitive operation occur. Each of these locations is
+said to perform the operation. Consider \figref{figure:mapsubwindows}, which
+shows a snippet of code from \code{MapSubWindows}, a function in the \xserver.
+It contains writes of \code{True} to \code{pWin->mapped}, and \code{MapNotify}
+to \code{event.u.u.type}, as well as a traversal of the children of the window
+pointer \code{pParent}.  Thus, a call to the function \code{MapSubWindows}
+performs both the operations \op{Window\_Map} and \op{Window\_Enumerate}. We
+use a static fingerprint matching algorithm, described in
+\chapref{chapter:matching}, to determine the set of security-sensitive
+operations performed by each function.
+
+In addition to identifying the locations where security-sensitive operations
+occur, in this step we also try to identify the subject and object associated
+with the operation. To do so, we identify the variables corresponding to
+subject and object data types (such as \code{Client} and \code{Window}) in
+scope. In most cases, this heuristic is good enough to identify the subject and
+the object. In \figref{figure:mapsubwindows}, the subject is the client
+requesting the operation (\code{pClient}), and the object for
+\op{Window\_Enumerate} is the window whose children are enumerated
+(\code{pParent}), and the object for \op{Window\_Map} is the variable denoting
+the child windows (\code{pWin}) that are mapped to the screen.
+
+Step~2 and~3 together identify all locations where the server performs
+security-sensitive operations.  
+
+
+%%%%%%%%%%%%%%%% STEP 4 %%%%%%%%%%%%%%%%%%%%%%
+
+\subsection{Step 4: Instrument the server} 
+\label{chapter:overview:approach:step4}
+%
+Having identified all locations where security-sensitive operations are
+performed, the server can be retrofitted by inserting calls to a reference
+monitor at these locations, to achieve complete mediation. In particular, if we
+determine that a statement \code{\textbf{Stmt}} is security-sensitive, and that
+it generates the security event
+\triple{\textit{sub}}{\textit{obj}}{\textit{op}}, it is instrumented as shown
+below.  Note that if \code{\textbf{Stmt}} is a call to a function \code{foo},
+the query can instead be placed in the function-body of \code{foo}.
+
+\begin{center}
+\newsavebox{\queryreferencemonitor}
+\begin{lrbox}{\queryreferencemonitor}
+\begin{minipage}[ht]{3.45in}
+\lstset{
+language=C,
+tabsize=4,
+basicstyle=\ttfamily\footnotesize,
+keywordstyle=\sffamily\bfseries,
+commentstyle=\rmfamily\emph\footnotesize,
+morekeywords={QueryRefmon, TRUE, Stmt, HandleFailure},
+escapeinside={/*@}{@*/}
+}
+\begin{lstlisting}
+if (QueryRefmon(sub, obj, op) != TRUE) {
+    HandleFailure;
+} 
+else {
+    Stmt;
+}
+\end{lstlisting}
+\end{minipage}
+\end{lrbox}\fbox{\usebox{\queryreferencemonitor}}
+\end{center}
+
+For example, because the function \code{MapSubWindows} performs the
+security-sensitive operation \op{Window\_Enumerate} (where children of
+\code{pParent} are enumerated) calls to \code{MapSubWindows} are protected as
+shown below.
+
+\begin{center}
+\newsavebox{\protectmapsubwindows}
+\begin{lrbox}{\protectmapsubwindows}
+\begin{minipage}[ht]{5.25in}
+\lstset{
+language=C,
+tabsize=4,
+basicstyle=\ttfamily\footnotesize,
+keywordstyle=\sffamily\bfseries,
+commentstyle=\rmfamily\emph\footnotesize,
+morekeywords={QueryRefmon, TRUE, MapSubWindows, HandleFailure, Window_Enumerate},
+morecomment=[s][\rmfamily\bfseries\emph\scriptsize\underbar]{/**}{*/},
+escapeinside={/*@}{@*/}
+}
+\begin{lstlisting}
+if (QueryRefmon (pClient, pParent, Window_Enumerate) != TRUE) {
+    HandleFailure;
+}
+else {
+    MapSubWindows(pParent,pClient);
+}
+\end{lstlisting}
+\end{minipage}
+\end{lrbox}\fbox{\usebox{\protectmapsubwindows}}
+\end{center}
+
+The statement \code{HandleFailure} can be used by the server to take
+suitable action against the offending client, either by terminating the client,
+or by auditing the failed request. Our approach currently does not automate the
+generation of failure-handling code---this must be manually written on a
+case-by-case basis. Developing an approach to gracefully handle failure in a
+principled way is an important topic for future research.
+
+As mentioned earlier, authorization policies are expressed in terms of
+security-labels of subjects and objects.  Security-labels can be stored in a
+table within the reference monitor, or instead, with data structures used
+by the server to represent subjects and objects. For example, in the \xserver,
+extra fields can be added to the \code{Client} and \code{Window} data
+structures to store security-labels. In either case, because we pass pointers
+to both the subject and the object to the reference monitor using
+\code{QueryRefmon}, the reference monitor can look up the corresponding
+security-labels, and consult the policy.
+
+
+%%%%%%%%%%%%%%%% STEP 5 %%%%%%%%%%%%%%%%%%%%%%
+
+\subsection{Step 5: Generate the reference monitor}
+\label{chapter:overview:approach:step5}
+%
+This step generates code for the \code{QueryRefmon} function. We generate a
+template for this function, omitting two details that must be completed
+manually by a developer.  First, the developer must specify how the policy is
+to be consulted, \ie~he must implement \return\ using an appropriate policy
+management API (\eg~\cite{tresys1, tresys2}). Second, he must implement the
+state update function, \update, by specifying how the state of the reference
+monitor is to be updated.  
+
+For example, when a security-event
+\triple{\code{pClient}}{\code{pWin}}{\op{Window\_Create}} succeeds,
+corresponding to creation of a new window, the security-label of \code{pWin},
+the newly-created window, must be initialized appropriately. Similarly, a
+security-event that copies data from \code{pWin}$_1$ to \code{pWin}$_2$ may
+entail updating the security-label of \code{pWin}$_2$ (\eg~under the
+Chinese-Wall policy~\cite{bn89}).  Because security-labels are stored either as
+a table within the reference monitor or as fields of subject or object data
+structures as described earlier, the developer must modify these data
+structures appropriately to update security-labels. This step is described in
+further detail in \sectref{chapter:matching}. 
+
+Note that while Steps~2-4 are policy independent, Step~5 requires
+implementation of \return\ and \update, which depend on the specific policy to
+be enforced. 
+
+%%%%%%%%%%%%%%%% STEP 6 %%%%%%%%%%%%%%%%%%%%%%
+
+\subsection{Step 6: Link the modified server and reference monitor} 
+\label{chapter:overview:approach:step6}
+%
+The last step involves linking the retrofitted server and the reference monitor
+code to create an executable that can enforce authorization policies.
+
+
+%%%%%%%%%%%%%%%% Security Analysis %%%%%%%%%%%%%%%%%%%%%%
+\section{Discussion I: Security analysis}
+\label{chapter:overview:discussion:security-analysis}
+
+We now examine the security of our approach. 
+%
+\begin{itemize}
+%
+\item \textbf{The enforcer} is implemented using instrumentation inserted in
+Step~4. Because the subject, object, and operation are passed to the reference
+monitor, security-labels can be retrieved, and the authorization policy
+consulted. If the requested operation is not permitted by the policy, the
+instrumentation ensures that it will not be executed. Further, because the
+server controls client connections, it can use \code{HandleFailure} to
+terminate the execution of malicious clients.
+%
+\item \textbf{The reference monitor} is part of the server's address space, and
+is thus tamper-proof based upon our assumptions in
+\sectref{chapter:overview:assumptions}.  Alternately, the reference monitor can
+run as a separate process, and communicate with the server using IPC. The
+policy itself must be protected by storing it on the file-system with
+permissions such that it can be modified only by a privileged system user.
+%
+\end{itemize}
+
+The security provided by our approach is thus contingent on whether calls to
+the reference monitor are placed so as to satisfy the Principle of Complete
+Mediation. Because reference monitor calls are placed by matching fingerprints,
+the security of our approach depends on the soundness and completeness of the
+fingerprint mining algorithms (\chapref{chapter:dynamic} and
+\chapref{chapter:static}) and the fingerprint matching algorithm
+(\chapref{chapter:matching}).
+
+A noteworthy feature of our approach is its modularity. In particular,
+alternative implementations of fingerprint mining algorithms (\eg~using program
+slicing techniques~\cite{ah90,kr97,zg03}) and instrumentation (\eg~using aspect
+weavers~\cite{aosd}) can be used in place of the algorithms developed in this
+dissertation.  Thus, our technique benefits directly from improved algorithms
+for these tasks.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Discussion II: Why retrofit the server?}
+\label{chapter:overview:discussion:why-retrofit-the-server}
+
+% Why existing techniques, such as OS mechanisms, are not sufficient
+A question that may arise based upon the discussion of the technique so far is:
+``Why does the server itself have to be retrofitted to enforce authorization
+policies on its clients? In particular, why can't existing policy enforcement
+mechanisms in a security-enhanced operating system (\eg~\selinux), upon which
+the server runs, be used to enforce these policies?'' 
+
+The answer is that the server may provide channels of communication between
+clients that are not readily visible to the operating system. For example,
+consider enforcing a policy in the \xserver\ that disallows a cut operation
+from a \subjlab{Top-secret} window followed by a paste operation into an
+\subjlab{Unclassified} window. Cut and paste are \xserver-specific channels for
+\xclient\ communication. While these operations do have a kernel footprint,
+they are not as readily visible in the operating system as they are within the
+\xserver, where they are primitive operations. It is not advisable in such
+cases to use the operating system to enforce authorization policies, because it
+must be modified to be made aware of kernel footprints of \xserver-specific
+operations, which introduces application-specific code into the operating
+system. In addition, the \xserver\ must also be modified to expose more
+information to the operating system, such as internal data structures that will
+be affected by the requested operation. It has been argued that this is
+impractical~\cite{ksv03}.

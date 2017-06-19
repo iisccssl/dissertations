@@ -1,0 +1,954 @@
+\chapter{Using Fingerprints to Retrofit Legacy Code}
+\label{chapter:matching}
+
+This chapter presents a technique that uses fingerprints to statically retrofit
+legacy code with reference monitor calls (also called \textit{authorization
+hooks}). It also discusses techniques to synthesize reference monitor code (if
+a reference monitor implementation is not available) and to analyze reference
+monitor code (if an implementation is available). The techniques presented in
+this chapter have been applied to retrofit the \xserver, and enforce
+authorization policies on \xclient\ requests.
+
+\section{Problem statement}
+\label{chapter:matching:problem}
+
+Given the source code of a server program and a set of fingerprints of
+security-sensitive operations, the technique presented in this chapter
+statically identifies all locations that match these fingerprints (and 
+hence perform the corresponding security-sensitive operation).
+
+The server must then be modified by inserting appropriate authorization checks
+at each location where a security-sensitive operation is performed.  This
+chapter presents a technique to retrofit the server with calls to a reference
+monitor, and also describes the key steps involved in implementing the
+reference monitor. 
+
+In some cases, the security analyst may decide to use an existing reference
+monitor with the retrofitted server. This reference monitor may contain
+existing implementations of authorization queries, where each authorization
+query may consult the policy to check whether one or more security-sensitive
+operations is permitted. Such an implementation exists, for example, in
+\selinux, and the problem in this case is to place calls to these authorization
+queries at appropriate locations in the server (in the case of \selinux, the
+server is the Linux kernel).  This chapter also presents an algorithm to
+analyze existing implementations of authorization queries to identify the
+security-sensitive operations authorized by each query.
+
+
+%------------------------------------------------------------------------------
+\section{Identifying security-sensitive locations}
+\label{chapter:matching:identifying}
+
+We employ static pattern matching on the source code of the server to locate
+all occurrences of fingerprints. Each location that matches a fingerprint is
+deemed to perform the security-sensitive operation that it represents. Such
+locations are then instrumented with reference monitor calls.  In this respect,
+our approach bears close resemblance to aspect-oriented programming, where
+static pattern matching is employed to match \textit{pointcuts} against source
+code to locate \textit{joinpoints} and weave \textit{advice}~\cite{aosd}.
+
+Our approach currently identifies security-sensitive locations at the
+granularity of function calls. Each function that contains all the code
+patterns in a fingerprint (and satisfies the constraints in the fingerprint)
+is said to match the fingerprint. The idea is that by mediating calls to 
+functions that contain these patterns, the corresponding security-sensitive 
+operations are mediated as well.  This is done using a flow-insensitive, 
+analysis, as described in \aref{algorithm:matching-intra}. 
+
+\aref{algorithm:matching-intra} is a simple intraprocedural analysis that
+first identifies the set of code patterns that appear in the body of a
+function, and then checks to see if the code patterns contained in the
+fingerprint of a security-sensitive operation appear in this set. If so,
+the function is marked as performing the security-sensitive operation.
+Note that a fingerprint can contain a code pattern of the form
+\textit{Call}~\code{f}: in this case, the function \code{f} is marked
+as performing the security-sensitive operation.
+
+Recall from \figref{figure:fingerprint-definition} that a fingerprint can
+either be \textit{intraprocedural} or \textit{interprocedural}. Intraprocedural
+fingerprints are matched as shown in \aref{algorithm:matching-intra}, by
+considering the set of code patterns contained in each function.
+Interprocedural fingerprints contain code patterns that may appear in different
+functions, and the matching algorithm shown in \aref{algorithm:matching-intra}
+must thus be extended to match interprocedural fingerprints. This is achieved
+by a straightforward (and standard) extension to
+\aref{algorithm:matching-intra}.  We first compute the set of code patterns
+contained in each function intraprocedurally, as shown in
+\aref{algorithm:matching-intra}.  We then traverse the call-graph in reverse
+topological order, gathering the set of code patterns contained in each
+function. The interprocedural extension is based upon the summary-based
+approach to interprocedural program analysis~\cite{sp81}.
+
+To match a fingerprint, we compare the code patterns contained in a fingerprint
+against the set of code patterns gathered at each node in the call-graph. The
+node in the call-graph closest to the leaf that contains all the code patterns
+in a fingerprint is marked as performing the security-sensitive operation.
+While the fingerprints for the \xserver\ and PennMUSH were intraprocedural, we
+encountered a few interprocedural fingerprints in the case of \ext. 
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\restylealgo{boxed}
+\linesnumbered
+\begin{algorithm}[ht!]
+\SetVline
+\KwName{\algoname{Find\_Security-sensitive\_Locations}{(\server, $S$, $\mathcal{FP}$)}}
+%
+\KwIn{
+(i)~\server: Server to be retrofitted,\\
+(ii)~$S$: Set of security-sensitive operations
+\{\textsf{op}$_1$, $\ldots$, \textsf{op}$_n$\}, and\\
+(ii)~$\mathcal{FP}$: Set of fingerprints \{fp$_1$, $\ldots$, fp$_n$\} of
+\textsf{op}$_1$, $\ldots$, \textsf{op}$_n$, respectively.}
+%
+\KwOut{Opset: \server~$\rightarrow$~2$^{S}$, where Opset($f$) denotes the set
+of security-sensitive operations performed by a call to $f$, a function of \server.}
+
+\ForEach{(function $f$ in \server)}{
+   Opset($f$) := $\phi$\;
+}
+%
+\texttt{~/*} Preprocess function call code patterns \texttt{~*/}\;
+\ForEach{(fingerprint fp$_i$ in $\mathcal{FP}$)} {
+  fpset$_i$ := Set of code patterns in fp$_i$\;
+  \If{(fpset$_i$ == \{\textit{Call}~\texttt{f$_1$}, $\ldots$, \textit{Call}~\texttt{f$_m$}\})}{
+    \ForEach{($f$ $\in$ \{\texttt{f$_1$}, $\ldots$, \texttt{f$_m$}\})}{
+      Opset($f$) = Opset($f$) $\cup$ \{\textsf{op}$_i$\}\;
+    }
+  }
+}
+%
+\texttt{~/*} Process all the fingerprints \texttt{~*/}\;
+\ForEach{(function $f$ in \server)}{
+  CP($f$) := Set of code patterns in $f$ (as determined using the ASTs of
+  statements in $f$)\;
+  \ForEach{(fingerprint fp$_i$ in $\mathcal{FP}$)}{
+    \If{(fpset$_i$ $\subseteq$ CP($f$) and all contraints specified in fp$_i$ 
+          are satisfied in $f$)} {
+      Opset($f$) := Opset($f$) $\cup$ \{\textsf{op}$_i$\}\;
+    }
+  }
+}
+%
+\Return Opset\;
+%
+\mycaption{Finding functions that contain code patterns that appear
+in fingerprints.}{\label{algorithm:matching-intra}}
+\end{algorithm}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+Consider the function \code{MapSubWindows} in the \xserver\ (shown in
+\figref{figure:mapsubwindows}). This function maps all children of a given
+window (\code{pParent} in \figref{figure:mapsubwindows}) to the screen. Note
+that it contains code patterns that constitute the fingerprint of both
+\op{Window\_Enumerate} and \op{Window\_Map}.  Thus, Opset(\code{MapSubWindows})
+= \{\op{Window\_Map}, \op{Window\_Enumerate}\}. 
+
+Constraints in fingerprints can be used to restrict matches. For example, the
+fingerprint for \op{Window\_Enumerate}, shown below, constrains the
+\code{WindowPtr} variable used in the first code pattern to be different from
+the variable in the second \code{WindowPtr} variable. This is especially useful
+for cases such as the one shown in \figref{figure:mapsubwindows}, where the
+\textit{parent} window's \code{firstChild} field is read, followed by the
+\code{nextSib} field of child windows.
+
+\begin{center}
+\begin{tabular}{|r l|}
+\hline
+\op{Window\_Enumerate} :- 
+  & \textit{Read}~\code{WindowPtr$_1$->firstChild}\\
+  & $\wedge$ \textit{Read}~\code{WindowPtr$_2$->nextSib}\\
+  & $\wedge$ \code{WindowPtr $\neq$ 0} \textit{Subject to}\\
+  & \textit{Different}(\code{WindowPtr$_1$}, \code{WindowPtr$_2$})\\\hline
+\end{tabular}
+\end{center}
+
+\figref{figure:ext2fpeg} and \figref{figure:ext2rmdircg} illustrate how
+interprocedural matching of fingerprints proceeds using the example of the
+\ext\ file system. \figref{figure:ext2fpeg} shows interprocedural fingerprints
+for four security-sensitive operations, \op{Dir\_Write}, \op{Dir\_Rmdir},
+\op{File\_Unlink} and \op{Dir\_Search}; these security-sensitive operations
+were identified in the LSM project~\cite{wcs+02}.
+
+\figref{figure:ext2rmdircg} shows a portion of the call-graph of the \ext\ file
+system, rooted at the node corresponding to the function \code{ext2\_rmdir}.
+Note that the functions shown in the call-graph (\code{ext2\_unlink},
+\code{ext2\_dec\_count}, etc.) can also be called by other functions in the
+kernel; these edges are not shown in \figref{figure:ext2rmdircg}. When a
+request is received to remove directory \code{bar} from directory \code{foo},
+\code{ext2\_rmdir} checks to see that \code{bar} is empty via a call to
+\code{ext2\_rmdir\_empty} (not shown in \figref{figure:ext2rmdircg}). It then
+calls \code{ext2\_unlink}, which modifies \ext-specific data structures and
+removes the entry of \code{bar} from the inode of \code{foo}. Finally, it calls
+\code{ext2\_dec\_count} to decrement the field \code{i\_nlink} on the inodes of
+both \code{foo} and \code{bar}.
+
+\begin{figure}[ht!]
+\begin{center}
+\begin{tabular}{|r l|}
+\hline
+\op{Dir\_Write}   :- & \textit{Write}~\unk~\textit{To}~\code{inode->i\_ctime}\\
+                     & $\wedge$ \textit{Call}~\code{address\_space\_ops->prepare\_write()}\\ 
+\op{Dir\_Search}  :- & \textit{Read}~\code{inode->i\_mapping}\\
+\op{File\_Unlink} :- & \textit{Decrement} (\code{inode->i\_nlink})\\
+                     & $\wedge$ $\neg$\textit{Write}~$0$~\textit{To}~\code{inode->i\_size}\\
+\op{Dir\_Rmdir}   :- & \textit{Write}~$0$~\textit{To}~\code{inode->i\_size}\\
+                     & $\wedge$
+                     \textit{Decrement}~\code{inode->i\_nlink}\\\hline
+\end{tabular}
+\end{center}
+\mycaption{Interprocedural fingerprints for four security-sensitive operations
+for the \ext\ file system}
+{\label{figure:ext2fpeg}}
+\end{figure}
+
+\begin{figure}[ht!]
+\begin{center}
+\newsavebox{\exttwormdircode}
+\begin{lrbox}{\exttwormdircode}
+\begin{minipage}[ht]{6in}
+\ifpdf
+\centerline{\includegraphics[keepaspectratio=true,width=5.8in]{figures/pdf/ext2rmdircg.pdf}}
+\else
+\centerline{\includegraphics[keepaspectratio=true,width=5.8in]{figures/eps/ext2rmdircg.eps}}
+\fi
+\end{minipage}
+\end{lrbox}\fbox{\usebox{\exttwormdircode}}
+\end{center}
+\mycaption{A portion of the call-graph of the \ext\ file system, rooted at the
+function \code{ext2\_rmdir}. Code snippets relevant to the example are shown in
+boxes near the functions that they appear in.}
+{\label{figure:ext2rmdircg}}
+\end{figure}
+
+\figref{figure:ext2rmdirres} shows the results of matching the fingerprints
+shown in \figref{figure:ext2fpeg} interprocedurally using the \ext\ call-graph
+snippet shown in \figref{figure:ext2rmdircg}.  The results are
+self-explanatory.  For example, the matching algorithm infers that
+\code{ext2\_rmdir} performs the security-sensitive operations \op{Dir\_Rmdir},
+\op{Dir\_Search} and \op{Dir\_Write}. Note that in this case, matching is
+performed interprocedurally, and the function in the call-graph, closest to
+the leaf, that contains all the code patterns in a fingerprint is marked as
+performing the security-sensitive operation represented by that fingerprint.
+
+\begin{figure}
+\begin{center}
+\begin{tabular}{|r |l|}
+\hline
+\code{ext2\_delete\_entry}  
+  & \op{Dir\_Write}\\\hline
+\code{ext2\_get\_page}  
+  & \op{Dir\_Search}\\\hline
+\code{ext2\_find\_entry}  
+  & \op{Dir\_Search}\\\hline
+\code{ext2\_dec\_count}  
+  & \op{File\_Unlink}\\\hline
+\code{ext2\_unlink}  
+  & \op{File\_Unlink}, \op{Dir\_Write}, \op{Dir\_Search}\\\hline
+\code{ext2\_rmdir}  
+  & \op{Dir\_Rmdir}, \op{Dir\_Write}, \op{Dir\_Search}\\\hline
+\end{tabular}
+\end{center}
+\mycaption{Results of matching the interprocedural fingerprints shown in
+\figref{figure:ext2fpeg}.}{\label{figure:ext2rmdirres}}
+\end{figure}
+
+In addition to fingerprint matching, we also employ a simple heuristic to help
+identify the subject requesting the security-sensitive operation, and the
+object upon which the security-sensitive operation is performed. To do so, we
+identify variables of the relevant types that are in scope (some domain
+knowledge may be required here). For example, in the \xserver, the subject is
+always the client requesting the operation, which is a variable of the
+\code{Client} data type, and the object can be identified based upon the kind
+of operation requested.  For window operations, the object is a variable of the
+\code{Window} data type.  This set is then manually inspected to recover the
+relevant subject and object at each location.
+
+%------------------------------------------------------------------------------
+\section{Evaluation of the matching algorithm} 
+
+We implemented \aref{algorithm:matching-intra} and its interprocedural variant
+as a plugin to CIL~\cite{nmr+02}. We evaluate its effectiveness on the
+\xserver\ in the following sections. In our experiments, we used the
+fingerprints that were mined using the dynamic fingerprint mining algorithm,
+described in \chapref{chapter:dynamic}.
+
+%
+\subsection{How precise are the security-sensitive locations found?}
+%
+\aref{algorithm:matching-intra} precisely identifies the set of
+security-sensitive operations performed by each function, with one exception.
+It reports false positives for the \op{Window\_Enumerate} operation, \ie\ it
+reports that certain functions perform this operation, whereas in fact, they do
+not.  Out of $20$ functions reported as performing \op{Window\_Enumerate}, only
+$10$ actually do.
+
+We found that this was because of the inadequate expressive power of the code
+pattern language. In particular, \aref{algorithm:matching-intra} matches
+functions that contain the code patterns \code{WindowPtr $\neq$ 0},
+\textit{Read} \code{WindowPtr->firstChild}, and \textit{Read}
+\code{WindowPtr->nextSib}, but do not perform linked-list traversal. These
+false positives can be eliminated by enhancing the fingerprint language with
+more constructs (in particular, loop constructs).
+
+\subsection{How easy is it to identify subjects and objects?} 
+%
+As mentioned earlier, we identify subjects and objects using variables of
+relevant data types in scope. This simple heuristic is quite effective: out of
+$25$ functions in the \xserver\ that were identified as performing
+\code{Window} operations, the subject, of type \code{Client}, and object, of
+type \code{Window}, were available as formal parameters or derivable from
+formal parameters in $22$ of them. In the remaining functions, specifically,
+those performing \op{Window\_InputEvent}, the subject and object were derived
+from global variables. Even in this case, however, manual inspection quickly
+reveals the relevant global variables.
+%
+
+%------------------------------------------------------------------------------
+\section{Synthesizing a reference monitor implementation}
+\label{chapter:matching:section:refmonsynth}
+
+Locations identified as performing security-sensitive operations by
+\aref{algorithm:matching-intra} are then protected using instrumentation.
+Because we recover the complete description of security events (\ie~the
+subject, the object and the security-sensitive operation), adding
+instrumentation is straightforward, and calls to the \code{QueryRefmon}
+function (the reference monitor's API function to place an authorization 
+query) are inserted as described in
+\sectref{chapter:overview:approach:step4}. If the function to be protected is
+implemented in the server itself and not within a library (\eg~as is the case
+with all the security-sensitive function calls in the \ext\ file system, the
+\xserver, and PennMUSH), calls to \code{QueryRefmon} can be placed within the
+function body itself. Because the same variables that constitute the
+security-event are also passed to \code{QueryRef,on} (\ie\ if
+\triple{\textit{sub}}{\textit{obj}}{\textit{op}} is the security event, then
+the corresponding call is
+\code{QueryRefmon}(\triple{\textit{sub}}{\textit{obj}}{\textit{op}})), and the
+data structures used to represent subjects and objects are internal to the
+server, this approach avoids TOCTTOU bugs~\cite{bd96} by construction.
+
+\begin{figure}[ht!]
+\begin{center}
+\newsavebox{\queryrefmon}
+\begin{lrbox}{\queryrefmon}
+\begin{minipage}[ht]{6in}
+\lstset{
+language=C,
+tabsize=4,
+basicstyle=\ttfamily\footnotesize,
+keywordstyle=\sffamily\bfseries,
+commentstyle=\rmfamily\emph\footnotesize,
+morekeywords={bool, QueryRefmon, TRUE, FALSE, NULL, PolicyLookup,
+              Window_Create, Window_Map, ALLOW},
+escapeinside={/*@}{@*/}
+}
+\begin{lstlisting}
+bool QueryRefmon (Client *sub, Window *obj, Operation OP) {
+    switch (OP) {
+        case Window_Create:
+            rc = PolicyLookup (sub->label, NULL, Window_Create);
+            if (rc == ALLOW) {
+                obj->label = sub->label;
+                return TRUE;
+            }
+            else {
+                return FALSE;
+            }
+        case Window_Map:
+            rc = PolicyLookup (sub->label, NULL, Window_Map);
+            /* Rest of the code to handle Window_Map */
+            ...
+        /* More cases to handle security-sensitive operations */
+    }
+}
+\end{lstlisting}
+\end{minipage}
+\end{lrbox}\fbox{\usebox{\queryrefmon}}
+\end{center}
+\mycaption{Code fragment showing the implementation of \code{QueryRefmon} for
+\op{Window\_Create}.}
+{\label{figure:queryrefmon}}
+\end{figure}
+
+We also generate a template implementation of the authorization query function,
+\code{QueryRefmon}, as shown in \figref{figure:queryrefmon} (this example is
+for the \xserver). The developer is then faced with two tasks:
+
+\begin{enumerate}
+%
+\item \textbf{Implementing the policy consulter:} The developer must insert
+appropriate calls from a policy management API of his choice into the template
+implementation of \code{QueryRefmon}, generated as shown in
+\figref{figure:queryrefmon}. We impose no restrictions on the policy language,
+or the policy management framework.  \figref{figure:queryrefmon} shows an
+example: it shows a snippet of code generated. Subject and object labels are
+stored as fields (\code{label}) in the data structures representing them.  The
+statement in italics, a call to the function \code{PolicyLookup}, must be
+changed by the developer, and substituted with a call from the API of a
+policy-management framework of the developer's choice. 
+
+Several off-the-shelf policy-management tools are now available, including the
+\selinux\ policy management toolkit~\cite{tresys1}, which manages policies
+written in the \selinux\ policy language. If this tool is used, the relevant
+API call to replace \code{PolicyLookup} is \code{avc\_has\_perm}.
+
+
+\item \textbf{Implementing reference monitor state updates:} The developer must
+update the state of the reference monitor based upon the state update function
+\update. Note that \update\ depends on the policy to be enforced; different
+policies may choose to update security-labels differently. Functionality to
+determine how security-labels must change based upon whether an authorization
+request succeeds or fails must ideally be provided by the policy-management
+tool that is used (because how security-labels change is policy-dependent).
+
+However, if this functionality is not available in the policy-management tool
+used, the developer must update the state of the reference monitor manually.
+The fragment of code in the case for \op{Window\_Create} in
+\figref{figure:queryrefmon} shows a simple example of \update: When a new
+window is created, its security-label is initialized with the security-label of
+the client that created it. 
+
+It is worth noting for this example that a pointer to the window is created
+only after memory has been allocated for it (in the \code{CreateWindow}
+function of the \xserver). Thus we place the call to \code{QueryRefmon} in
+\code{CreateWindow} just after the statement that allocates memory for a
+window; if this call succeeds, the security-label of the window is initialized.
+Otherwise, we free the memory that was allocated, and return a \code{NULL}
+window (\ie\ \code{HandleFailure}) is implemented as \code{return NULL;}).
+
+\end{enumerate}
+
+Finally, it remains to explain how we bootstrap security-labels in the server.
+As mentioned earlier, we assume that the server runs on a machine with a
+security-enhanced operating system. We use operating system support to
+bootstrap security-labels based upon how clients connect to the server (as has
+been done by others~\cite{s05a}). For example, in an \selinux\ system, all
+socket connections have associated security-labels, and servers can bootstrap
+security using these labels. For example, \xclients\ connect to the \xserver\
+using a socket. In this case, we can use the security-label of the socket
+(obtained from the operating system) as the security-label of the \xclient. We
+then propagate \xclient\ security-labels as they manipulate resources on the
+\xserver, as shown in \figref{figure:queryrefmon}, where the client's
+security-label is used as the security-label for the newly-created window.
+
+
+%------------------------------------------------------------------------------
+\section{Example: Retrofitting the \xserver\ to enforce authorization policies}
+\label{chapter:matching:xserver-results}
+
+We demonstrate how an \xserver\ retrofitted using the techniques presented thus
+far enforces authorization policies on \xclients. In our experiments, we ran the 
+retrofitted \xserver\ on a machine running \selinux/Fedora~Core~4. Thus, we
+bootstrapped security-labels in the \xserver\ using \selinux\ security-labels 
+(\ie\ a client gets the label of the socket it uses to connect to the server). 
+We describe two attacks that are possible using the unsecured \xserver, and 
+describe corresponding policies, which when enforced by the retrofitted \xserver\
+prevent these attacks. In each case we implemented the policy  to be enforced
+within the \code{QueryRefmon} function itself. 
+
+\subsection{Example I: Setting window properties}
+
+\paragraph{Attack.} Several well-known attacks against the \xserver\ rely on
+the ability of an \xclient\ to set properties of windows belonging to other
+\xclients, \eg\ by changing their background or content~\cite{ksv03}.
+
+\paragraph{Policy.} \textit{Disallow an \xclient\ from changing properties of
+windows that it does not own}.  
+
+Note that this policy is enforced more easily by the \xserver\ than by the
+operating system. The operating system would have to understand several
+\xserver-specific details to enforce this policy. \xclients\ communicate with
+each other (via the \xserver) using the X protocol. To enforce this policy, the
+operating system would have to interpret X protocol messages to determine which
+messages change properties of windows, and which do not.  On the other hand,
+this policy is easily enforced by the \xserver\ because setting window
+properties involves exercising the \op{Window\_Chprop} security-sensitive
+operation.
+
+\paragraph{Enforcement.} The call to \code{QueryRefmon} placed in the
+\code{ChangeProperty} function of the \xserver\ mediates \op{Window\_Chprop}.
+To enforce this policy, we check that the security-label of the subject
+requesting the operation, and the security-label of the window whose properties
+are to be changed are equal. 
+
+\subsection{Example II: Secure cut-and-paste}
+
+\paragraph{Attack.} Operating systems can ensure that a file belonging to a
+\subjlab{Top-secret} user cannot be read by an \subjlab{Unclassified} user (the
+Bell-LaPadula policy~\cite{bl76}).  However, if both the \subjlab{Top-secret}
+and \subjlab{Unclassified} users have \code{xterm}s open on an \xserver, then a
+cut operation from the \code{xterm} belonging to the \subjlab{Top-secret} user
+and a paste operation into the \code{xterm} of the \subjlab{Unclassified} user
+violates the Bell-LaPadula policy.
+
+\paragraph{Policy.} \textit{Ensure that a cut from a high-security \xclient\
+window can only be pasted into \xclient\ windows with equal or higher
+security}. This is akin to the Bell-LaPadula policy~\cite{bl76}.
+
+Existing security mechanisms for the \xserver\ (namely, the X security
+extension~\cite{w96a}) cannot enforce this policy if there are more than two
+security-levels.
+
+\paragraph{Enforcement.} The cut and paste operations correspond to the
+security-sensitive operation \op{Window\_Chselection} of the \xserver. \aid\
+identifies the fingerprints of \op{Window\_Chselection} as calls to two
+functions, \code{ProcSetSelectionOwner} and \code{ProcConvertSelection} in the
+\xserver.  It turns out that the former is responsible for the cut operation,
+and the latter for the paste operation. Calls to \code{QueryRefmon} placed in
+these functions are used to mediate the cut and paste operations, respectively.
+
+We created three users on our machine with security-labels
+\subjlab{Top-secret}, \subjlab{Confidential} and \subjlab{Unclassified}, in
+decreasing order of security. The \xclients\ created by these users inherit
+their security-labels.  We were able to successfully ensure that a cut
+operation from a high-security \xclient\ window (\eg~\subjlab{Confidential})
+can only result in a paste into \xclient\ windows of equal or higher security
+(\eg~\subjlab{Top-secret} or \subjlab{Confidential}).  
+
+%---------------------------------------------------------------------------
+\section{Performance of the retrofitted \xserver}
+%
+We measured the runtime overhead imposed by instrumentation by running a
+retrofitted \xserver\ and an unmodified \xserver\ on $25$
+\code{x11perf}~\cite{x11perf} benchmarks. We ran the retrofitted \xserver\ with
+a null policy, \ie\ all authorization requests succeed, to measure performance
+overhead. We measured performance overhead by comparing the number of
+operations per second (as computed by the \code{x11perf} benchmark suite) in
+the retrofitted \xserver\ against the number of operations per second in an
+unmodified \xserver. Overhead ranged from $0$\% to $18$\% across the
+benchmarks, with an average overhead of $2$\%. 
+
+%------------------------------------------------------------------------------
+%                             Approach :: Hook Analysis
+%------------------------------------------------------------------------------
+
+\section{Analyzing a reference monitor implementation}
+\label{chapter:section:hookanal}
+
+In some cases, an implementation of the reference monitor may be available, and
+the security analyst may only wish to determine locations where authorization
+queries to the reference monitor must be placed. Indeed, we encountered this
+scenario in our analysis of the \ext\ file system, where we had a reference
+monitor implementation available (namely, that implemented in \selinux), and
+wanted to determine where to place authorization queries.  In such cases, the
+reference monitor need not be synthesized, as described in
+\sectref{chapter:matching:section:refmonsynth}. Instead, the reference monitor
+implementation must be analyzed to determine the set of security-sensitive
+operations that are authorized by each authorization query function that is
+exported by the reference monitor. 
+
+This section describes an algorithm that analyzes reference monitor
+implementations, and extracts, for each query function in the implementation,
+the set of security-sensitive operations authorized by that query function, and
+the parameters with which the query must be invoked. We use the \ext\ file
+system and the \selinux\ reference monitor implementation as the running
+example in our explanation of the algorithm.
+
+\begin{figure}[ht!]
+\begin{center}
+\newsavebox{\selinuxinodepermission}
+\begin{lrbox}{\selinuxinodepermission}
+\begin{minipage}[ht]{6in}
+\lstset{
+language=C,
+tabsize=4,
+basicstyle=\ttfamily\footnotesize,
+keywordstyle=\sffamily\bfseries,
+commentstyle=\rmfamily\emph\footnotesize,
+morekeywords={selinux_inode_permission, inode_has_perm, file_mask_to_av,
+access_vector_t, S_IFMT, S_IFDIR, MAY_EXEC, MAY_WRITE, MAY_READ, DIR__SEARCH,
+DIR__WRITE, DIR__READ, NULL, inline},
+escapeinside={/*@}{@*/}
+}
+\begin{lstlisting}[numbers=left, firstnumber=101]
+int selinux_inode_permission(struct inode *inode, int mask) { 
+    ...
+    if (!mask) {
+        return 0;
+    }
+    return inode_has_perm (current, inode,
+              file_mask_to_av(inode->i_mode,mask), NULL); /*@ \label{line:filemasktoav} @*/
+}
+\end{lstlisting}
+
+\begin{lstlisting}[numbers=left, firstnumber=201]
+static inline access_vector_t file_mask_to_av (int mode, int mask) { 
+    access_vector_t av = 0;
+    if ((mode & S_IFMT) != S_IFDIR) { /*@ \label{line:filemasktoavpred1} @*/
+        /* File-related security-sensitive operations */
+        ...
+    } 
+    else { /*@ \label{line:filemasktoavpred2begin} @*/
+        if (mask & MAY_EXEC) 
+            av |= Dir_Search;
+        if (mask & MAY_WRITE) 
+            av |= Dir_Write;
+        if (mask & MAY_READ) 
+            av |= Dir_Read;
+    }      /*@ \label{line:filemasktoavpred2end} @*/
+    return av; 
+}
+\end{lstlisting}
+\end{minipage}
+\end{lrbox}\fbox{\usebox{\selinuxinodepermission}}
+\end{center}
+\mycaption{Code for the \selinux\ authorization query
+\code{selinux\_inode\_permission} (borrowed from the Linux-2.4.21 kernel).}
+{\label{figure:modanaleg}}
+\end{figure}
+
+Consider \figref{figure:modanaleg}, which shows a snippet of the implementation
+of the authorization query \code{selinux\_inode\_permission} in the \selinux\
+reference monitor implementation.  This snippet authorizes searching, writing
+to, or reading from an inode representing a directory, based upon the value of
+\code{mask}. The authorization is performed by the call to
+\code{inode\_has\_perm}, which authorizes a security-sensitive operation on an
+inode based upon the \textit{access vector} it is invoked with
+\footnote{Security-sensitive operations are represented in \selinux\ using
+bit-vectors, called access vectors. The macros \op{Dir\_Search},
+\op{Dir\_Write} and \op{Dir\_Read} in \figref{figure:modanaleg} represent these
+bit-vectors}. In \figref{figure:modanaleg}, the access vector is obtained by a
+call to \code{file\_mask\_to\_av}.
+
+Our analysis algorithm, described in \aref{algorithm:analyzemodule} and
+\aref{algorithm:analyzefunction}, produces the output shown below upon
+analyzing the code snippet shown in \figref{figure:modanaleg}.
+
+\begin{center}
+\begin{tabular}{|l|}
+\hline
+\predoppair{(mask $\neq$ 0) $\wedge$ inode\_isdir 
+$\wedge$ (mask \& \op{MAY\_EXEC})}{Dir\_Search}\\
+\predoppair{(mask $\neq$ 0) $\wedge$ inode\_isdir 
+$\wedge$ (mask \& \op{MAY\_WRITE})}{Dir\_Write}\\
+\predoppair{(mask $\neq$ 0) $\wedge$ inode\_isdir 
+$\wedge$ (mask \& \op{MAY\_READ})}{Dir\_Read}\\
+where ``\pred{inode\_isdir}'' denotes 
+\pred{o(inode$\myarrow$i\_mode \& S\_IFMT == S\_IFDIR)}.\\\hline
+\end{tabular}
+\end{center}
+
+Each line of the output is a tuple of the form
+\predoppair{predicate}{operation}, where the predicate only contains formal
+parameters of the authorization query. This tuple is interpreted as follows: if
+the authorization query is invoked in a context such that \pred{predicate}
+holds, then it checks that the security-sensitive operation \op{operation} is
+authorized. In this case, our analysis algorithm infers that for inodes that
+represent directories (\ie~the inodes with \pred{(inode$\myarrow$i\_mode \&
+S\_IFMT~==~S\_IFDIR)}) the hook \code{selinux\_inode\_permission} checks that
+the security-sensitive operations \op{Dir\_Search}, \op{Dir\_Write} or
+\op{Dir\_Read} are authorized, based upon the value of \code{mask}. 
+
+We now proceed to explain \aref{algorithm:analyzemodule}. For ease of
+explanation, assume that there is no recursion; we explain how we deal with
+recursion later in the section. The analysis proceeds by first constructing the
+call-graph of the reference monitor implementation. The call-graph is processed
+in reverse topologically sorted order, \ie~starting at the leaves, and
+proceeding upwards. For each node in the call-graph, it produces a summary, and
+outputs summaries of authorization queries, exported by the reference monitor.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Algorithm description: Analyze Module
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\restylealgo{boxed}\linesnumbered
+\begin{algorithm}[ht!]
+\SetVline
+\KwName{\algoname{Analyze\_Reference-Monitor}{($M$, $H$)}}
+\KwIn{
+(i) $M$: Reference monitor containing source code of authorization query functions,\\
+(ii) $H$: A set containing the names of authorization queries exported by the reference monitor.
+} 
+\KwOut{For each $h \in H$, a set \{\predoppair{predicate}{operation}\},
+denoting the security-sensitive operations authorized by each authorization
+query, and the conditions under which they are authorized.}
+
+\SetKwFunction{AnalyzeFunction}{Analyze\_Function}
+\dontprintsemicolon
+
+Construct the call-graph $G$ of the reference monitor $M$\;
+$L$ := List of vertices of $G$, reverse topologically sorted\;
+\ForEach{($f \in L$)}{
+  \textsf{Summary}($f$) := \AnalyzeFunction{$f$, \textsf{Entrypoint}({$f$}), \pred{true}}\;
+}
+\ForEach{($h \in H$)}{
+  Output \textsf{Summary}($h$)\;
+}
+\mycaption{Analyzing a reference monitor implementation to determine
+security-sensitive operations authorized by each authorization query.}
+{\label{algorithm:analyzemodule}}
+\end{algorithm}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+Summary construction is described in \aref{algorithm:analyzefunction}.  The
+summary of a function $f$ is a set of pairs \predoppair{pred}{op}, denoting the
+condition (\pred{pred}) under which a security-sensitive operation (\op{op}) is
+authorized by $f$. The analysis in \aref{algorithm:analyzefunction} is flow-
+and context-sensitive.  That is, it respects the control-flow of each function,
+and precisely models call-return semantics.
+
+Intuitively, summary construction for a function $f$ proceeds by propagating a
+predicate \pred{p} though the statements of $f$. At any statement, the
+predicate denotes the condition under which control-flow reaches the statement.
+The analysis begins at the first statement of the function $f$ (denoted by
+\textsf{Entrypoint}{($f$)}), with the predicate set to \pred{true}.
+
+At an \code{if-(\pred{q})-then-else} statement, the \pred{true} branch is
+analyzed with the predicate \pred{p~$\wedge$~q}, and the \pred{false} branch is
+analyzed with the predicate \pred{p~$\wedge$~$\neg$q}. For instance, the value
+of \pred{p} at line~\ref{line:filemasktoavpred1} in \figref{figure:modanaleg}
+is \pred{true}. Thus,
+lines~\ref{line:filemasktoavpred2begin}-\ref{line:filemasktoavpred2end} are
+analyzed with \pred{true~$\wedge$~(mode \& S\_IFMT) == S\_IFDIR}.  At
+\code{Call $g$($a_1,a_2,\ldots,a_n$)}, a call to the function $g$, the summary
+of $g$ is specialized to the calling-context.  Note that because of the order
+in which functions are processed in \aref{algorithm:analyzemodule}, the summary
+of $g$ is computed before $f$ is processed. The summary of $g$ is a set of
+tuples \predoppair{q$_i$}{op$_i$}.  Because of the way summaries are computed,
+formal parameters of $g$ appear in the predicate \pred{q$_i$}.  To specialize
+the summary of $g$, actual parameters $a_1$, $a_2$, $\ldots$, $a_n$ are
+substituted in place of formal parameters in \pred{q$_i$}. The resulting
+predicate \pred{r$_i$} is then combined with \pred{p}, and the entry
+\predoppair{p~$\wedge$~r$_i$}{op$_i$} is included in the summary of $f$.
+Intuitively, $g$ authorizes operation \op{op$_i$} if the predicate \pred{q$_i$}
+is satisfied. By substituting actual parameters in place of formal parameters,
+we determine whether the current call to $g$ authorizes operation \op{op$_i$};
+\ie~whether the predicate \pred{q$_i$}, specialized to the calling context, is
+satisfiable.  Because the call to $g$ is reached in $f$ under the condition
+\pred{p}, an operation is authorized by $g$ only if \pred{p~$\wedge$~r$_i$} is
+satisfiable.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Algorithm description: Algorithm AnalyzeFunction
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\restylealgo{boxed}\linesnumbered
+\begin{algorithm}[ht!]
+\SetVline
+\KwName{\algoname{Analyze\_Function}{($f$, $s$, \pred{p})}}
+\KwIn{
+(i) $f$: Function name,\\
+(ii) $s$: Statement in $f$ from which to start the analysis,\\
+(iii) \pred{p}: A Boolean predicate.
+}
+\KwOut{A set \{\predoppair{predicate}{operation}\}.}
+
+\SetKwFunction{AnalyzeFunction}{Analyze\_Function}
+\dontprintsemicolon
+
+$R$ := $\phi$\;
+\Switch{\algoname{Type-of}{($s$)}}
+{
+  \Case{\code{if} (\pred{q}) \code{then} $B_{true}$ \code{else} $B_{false}$}
+  {
+    $R$ := 
+    \AnalyzeFunction{$f$, \textsf{Entrypoint}({$B_{true}$}), \pred{p~$\wedge$~q}}\\
+    \indent\hspace{0.5cm}$\cup$
+    \AnalyzeFunction{$f$, \textsf{Entrypoint}({$B_{false}$}), \pred{p~$\wedge$~$\neg$q}}\;
+  }
+  
+  \Case{\code{Call} $g$($a_1$, $a_2$, $\ldots$, $a_n$)}
+  {
+    $G$ := \textsf{Summary}($g$)\;
+    \nllabel{line:casecall}
+    \ForEach{(\predoppair{q$_i$}{op$_i$} $\in G$)}{
+      \pred{r$_i$} := \pred{q$_i$} specialized with $a_1$, $a_2$, $\ldots$, $a_n$\;
+      $R$ := $R$ $\cup$ \{\predoppair{(p~$\wedge$~r$_i$)}{op$_i$}\}\;
+    }
+    $R$ := $R$ $\cup$ \AnalyzeFunction{$f$, \textsf{ControlFlowSucc}({$f$, $s$}), \pred{p}}\;
+    \nllabel{line:casecallend}
+  }
+
+  \Other
+  {
+    \lIf{($s$ authorizes security-sensitive operation \op{op})}
+      $R$ := \{\predoppair{p}{op}\}\;
+    Update \pred{p} appropriately\;
+    $R$ := $R$ $\cup$ \AnalyzeFunction{$f$, \textsf{ControlFlowSucc}({$f$, $s$}), \pred{p}}\;
+  }
+}
+
+\ForEach{(\predoppair{p}{op} $\in$ $R$)}
+{
+  Existentially quantify-out any local variables of $f$ appearing in \pred{p}\;
+}
+
+\Return $R$\;
+\mycaption{Determining the security-sensitive operations authorized by each
+function, and the conditions under which they are authorized.}
+{\label{algorithm:analyzefunction}}
+\end{algorithm}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+For other statements, the analysis determines whether the statement potentially
+authorizes an operation \op{op}. Determining whether a statement authorizes an
+operation \op{op} is specific to the way security-sensitive operations are
+represented in the kernel module. For instance, in \selinux, security-sensitive
+operations are denoted by bit-vectors, called access vectors and there is a
+one-to-one mapping between access vectors and security-sensitive operations.
+Thus, for the \selinux\ reference monitor we use the occurrence of an access
+vector (\eg~reading its value) in a statement to determine if the statement
+authorizes a security-sensitive operation.
+
+Where possible, the predicate \pred{p} is also updated appropriately based upon
+the action of statement $s$. For instance, if the statement in question is
+\code{j~:=~i}, and predicate \pred{p} propagated to this statement is
+\pred{(i~==~3)}, then the predicate \pred{p} is updated to \pred{(j~==~i)
+$\wedge$ (i~==~3)}. In cases where the effect of $s$ on \pred{p} cannot be
+determined, the new value of \pred{p} is set to \pred{Unknown}, a special value
+denoting that the value of \pred{p} cannot be determined precisely.
+
+For functions that have a formal parameter of type \code{access\_vector\_t}, but do
+not refer to any particular access vector (such as \op{Dir\_Read},
+\op{Dir\_Write}, or \op{Dir\_Search}), the analysis returns
+\{\predoppair{true}{$\lambda$$x.x$}\} (not shown in
+\aref{algorithm:analyzefunction}), which says that the function potentially
+authorizes any security-sensitive operation, based upon the access vector it is
+invoked with (the variable $x$ in $\lambda$$x.x$ denotes the access vector).
+
+After processing a statement $s$ in $f$, the analysis continues by processing
+the control-flow-successors of $s$. The analysis terminates when all the
+statements reachable from \textsf{Entrypoint}{($f$)} have been analyzed.  To keep
+the analysis tractable, \aref{algorithm:analyzefunction} analyzes loop bodies
+exactly once.  That is, it ignores back-edges of loops. As a result, loops are
+treated as conceptually equivalent to \code{if-then-else} statements.
+
+Finally, any local variables of $f$ appearing in predicates \pred{p} (for
+each \predoppair{p}{op} in the summary of $f$) are quantified-out. As a result,
+predicates appearing in the summary of $f$ only contain formal parameters of
+$f$. 
+
+\aref{algorithm:analyzemodule} and \aref{algorithm:analyzefunction} are, in
+effect, a simple implementation of a symbolic execution engine~\cite{k76}. Of
+course, implementing a full-fledged symbolic execution engine for C is a
+significant engineering exercise~\cite{gks05,sma05}; our implementation is
+simplistic, and ignores effects of aliasing (and is thus incomplete).
+
+We illustrate \aref{algorithm:analyzemodule} using
+\figref{figure:modanaleg}(A). For the function \code{file\_mask\_to\_av},
+\aref{algorithm:analyzefunction} returns the output shown below, where
+\pred{mode\_isdir} denotes \pred{mode \& S\_IFMT == S\_IFDIR}.
+
+\begin{center}
+\begin{tabular}{|l|}
+\hline
+\predoppair{mode\_isdir $\wedge$ (mask \& \op{MAY\_EXEC})}{Dir\_Search}\\
+\predoppair{mode\_isdir $\wedge$ (mask \& \op{MAY\_WRITE})}{Dir\_Write}\\
+\predoppair{mode\_isdir $\wedge$ (mask \& \op{MAY\_READ})}{Dir\_Read}\\\hline
+\end{tabular}
+\end{center}
+
+Observe that the summary only contains formal parameters of
+\code{file\_mask\_to\_av}. When this summary is specialized to the call on
+line~\ref{line:filemasktoav}, formal parameters are replaced with the actual parameters (e.g.,
+\code{mode} by \code{inode->i\_mode}), thus specializing the summary to the
+call-site, producing the output shown below, where \pred{inode\_isdir} denotes 
+\pred{inode$\myarrow$i\_mode \& S\_IFMT == S\_IFDIR}.
+
+\begin{center}
+\begin{tabular}{|l|}
+\hline
+\predoppair{inode\_isdir $\wedge$ (mask \& \op{MAY\_EXEC})}{Dir\_Search}\\
+\predoppair{inode\_isdir $\wedge$ (mask \& \op{MAY\_WRITE})}{Dir\_Write}\\
+\predoppair{inode\_isdir $\wedge$ (mask \& \op{MAY\_READ})}{Dir\_Read}\\\hline
+\end{tabular}
+\end{center}
+
+For \code{inode\_has\_perm}, \aref{algorithm:analyzefunction} returns
+\{\predoppair{true}{$\lambda$$x.x$}\}, which intuitively means that the
+function authorizes a security-sensitive operation based upon the access vector
+($x$) passed to it. Thus, when this call to \code{inode\_has\_perm} is
+specialized to the call on line~\ref{line:filemasktoav}, the summary obtained
+is the same shown above.  Because line~\ref{line:filemasktoav} in
+\code{selinux\_inode\_permission} is reached when (\pred{mask $\neq$ 0}), this
+predicate is combined with predicates in the summary of the function
+\code{inode\_has\_perm} to produce the result shown in
+\figref{figure:modanaleg}(B).
+
+Recursion in the kernel module introduces strongly-connected components in its
+call-graph. Note that \aref{algorithm:analyzemodule} requires the call-graph to
+be a directed acyclic graph (DAG). To handle recursion, we consider the
+functions in a strongly-connected component together.  That is, we produce a
+consolidated summary for each strongly-connected component. Intuitively, this
+summary is the set of security-sensitive operations (and the associated
+conditions) that could potentially be authorized if \textit{any} function in
+the strongly-connected component is called.  Observe that handling recursion
+also requires a small change to
+lines~(\ref{line:casecall})-(\ref{line:casecallend}) of
+\aref{algorithm:analyzefunction}.  Because of recursion, the summary of a
+function $g$ that is called by a function $f$ may no longer be available in
+line~(\ref{line:casecall}), in which case we skip forward to
+line~(\ref{line:casecallend}).
+
+
+\paragraph{Precision of the analysis.} Observe that
+\aref{algorithm:analyzefunction} analyzes all reachable statements of each
+function. Thus, if a function $f$ authorizes operation \op{op}, then
+\predoppair{q}{op} $\in$ \textsf{Summary}($f$), for some predicate \pred{q}.
+
+However, because of the approximations employed by
+\aref{algorithm:analyzemodule} and \aref{algorithm:analyzefunction} to keep the
+analysis tractable, the predicate \pred{q} may not accurately describe the
+condition under which \op{op} is authorized. In particular, because
+\aref{algorithm:analyzefunction} ignores back-edges on loops, loop bodies are
+analyzed exactly once, and the predicates retrieved will be imprecise.
+Similarly, because \aref{algorithm:analyzefunction} employs a heuristic to
+handle recursion, the predicates retrieved will be imprecise.  These predicates
+are used during hook placement to determine the arguments that the hook must be
+invoked with. Thus, imprecision in the results of the analysis will mean manual
+intervention to determine how hooks must be invoked.  
+
+In our experiments on the \selinux\ reference monitor, we found that the code
+of the reference monitor was relative simple, and we were able to retrieve the
+conditions precisely in most cases. For instance, there were no loops in any of
+the functions from the \selinux\ reference monitor that we analyzed.
+
+
+%------------------------------------------------------------------------------
+\section{Using the matching tool}
+\label{chapter:matching:usage}
+
+This section summarizes the steps that a security analyst must follow to use
+fingerprints to locate where security-sensitive operations are performed by a
+server.
+
+\begin{itemize}
+
+\item Run \aref{algorithm:matching-intra}, which identifies the
+security-sensitive operations performed by each function by matching
+fingerprints.
+
+\item For each function and for each security-sensitive operation performed
+by that function, determine the subject requesting the operation and the object
+affected by the operation.
+
+\item Run the transformation tool to insert authorization checks. If a
+reference monitor implementation is already available, use
+\aref{algorithm:analyzemodule} and \aref{algorithm:analyzefunction} to analyze
+the implementation and determine the authorization check that must be inserted.
+
+\item For each authorization check, determine how to handle failed
+authorizations, and insert appropriate failure-handling code.
+
+\end{itemize}
+
+
+%------------------------------------------------------------------------------
+\section{Summary of key ideas}
+\label{chapter:matching:keyideas}
+
+To summarize, the key contributions of this chapter are:
+
+\begin{itemize}
+%
+\item A static pattern-matching algorithm to match fingerprints against server
+source code, and locate security-sensitive operations. The pattern-matching
+algorithm works both intraprocedurally and interprocedurally, to match
+intraprocedural and interprocedural fingerprints, respectively.
+%
+\item Techniques to synthesize a reference monitor implementation, in cases
+where an implementation is not available.
+%
+\item Techniques to statically analyze a reference monitor implementation, and
+determine the security-sensitive operations authorized by each authorization
+query function exported by the reference monitor, when an implementation is
+available.
+%
+\end{itemize}

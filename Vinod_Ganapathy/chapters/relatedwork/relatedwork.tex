@@ -1,0 +1,331 @@
+\chapter{Related Work}
+\label{chapter:relatedwork}
+
+Authorization policy enforcement is a topic of central interest to computer
+security, and has received much attention over the last thirty five years.
+This chapter surveys related work in the area.
+
+
+%------------------------------------------------------------------------------
+\section{Foundations of authorization}
+\label{chapter:relatedwork:foundations}
+
+Authorization was first formalized by Lampson using the notion of an access
+control matrix~\cite{l71}. Each column of the access control matrix corresponds
+to a system resource, and each row corresponds to a system user. The matrix
+entry (\textit{sub}, \textit{obj}) denotes the \textit{rights} \footnote{The
+term \textit{rights} is synonymous with the term \textit{security-sensitive
+operation} used in this document as well as with the term \textit{permission}
+that is also used in the literature~\cite{ghr+05,jsz03,s05b}}.  (\eg\ read,
+write, create, own) that system user \textit{sub} has on system resource
+\textit{obj}.  Given a set of rules to create, modify and delete entries in an
+access control matrix, it is natural to ask the following \textit{safety}
+question: can a subject \textit{sub} ever have a right \textit{r} on a resource
+\textit{obj}? This problem was shown to be undecidable~\cite{hru76}. 
+
+While an access control matrix is an instantaneous description of the set of
+system resources that a subject can access, there are historically two ways to
+administer such an access matrix: the Discretionary Access Control (DAC) 
+and the Mandatory Access Control (MAC) model~\cite{tcsec}. In the DAC model
+(\eg~the Graham-Denning model~\cite{gd72}), the access rights that a user has
+on system resources that he owns can be \textit{delegated} to others, \ie~the
+access rights on resources that he owns are at his discretion. In contrast, in
+the MAC model (\eg~the Bell LaPadula model~\cite{bl76} and the Biba
+model~\cite{b77}), access rights that a user has on system resources are
+decided by a central authority, such as the system administrator, and cannot be
+changed at the discretion of the user. MAC policies have historically been used
+only in military applications, while DAC has been available on commercial
+operating systems, such as UNIX. However, recent developments, such as
+\selinux~\cite{ls01a,ls01b}, have enabled the deployment of MAC in commodity
+operating systems. 
+
+There are two popular ways to represent an access control matrix, namely,
+\textit{access control lists} (ACLs) and \textit{capabilities}. Access control
+lists typically associate each resource on the system with the set of access
+rights that each subject has on the resource. In contrast, capabilities
+typically associate each subject with the set of access rights that the subject
+has on system resources. Thus, if we assume that each column of the access
+control matrix represents a system resource, and each row corresponds to a
+subject, access control lists are obtained by reading off columns of the
+matrix, while capabilities are obtained by reading off rows of the matrix.
+Most modern commercial operating systems implement access control matrices as
+access control lists, while several historic systems and research operating
+systems have used capabilities (the book by Levy~\cite{l84} gives a good
+overview of historic systems that implemented capabilities; EROS is a modern
+research operating system that implements capabilities~\cite{ssf99}).
+
+%------------------------------------------------------------------------------
+\section{Authorization policy enforcement systems}
+\label{chapter:relatedwork:authpolenf}
+
+Reference monitors, introduced by Anderson in 1972~\cite{a72}, have
+historically been the standard mechanism for authorization policy enforcement.
+As explained in \chapref{chapter:introduction}, a reference monitor must
+satisfy three properties, namely, Complete Mediation, Tamper Resistance, and
+Verifiability. A reference monitor takes as input a description of the subject
+(\eg~user ID), a description of the object (\eg~file name), and the
+security-sensitive operation requested. It consults an authorization policy,
+and returns a Boolean, which determines whether the subject is allowed to
+perform the requested security-sensitive operation on the object. An
+enforcement mechanism (\eg~appropriate runtime checks inserted in code) uses
+this Boolean value to ensure that the policy is enforced.
+
+Historically, reference monitors have been implemented in the operating system.
+The main reason is because the operating system manages and mediates access to
+system resources. For example, most Linux distributions implement mechanisms to
+enforce DAC authorization policies using ACLs (the \code{rwx} bits associated
+with files are an example of ACLs). More recently, operating systems are being
+augmented and restructured to enforce more powerful access control policies
+(\eg~MAC) and information flow policies. Security-enhanced Linux
+(\selinux)~\cite{ls01a,ls01b} and the Asbestos operating
+system~\cite{ekv+05,kef+05} are two examples of such efforts. Both \selinux\
+and Asbestos associate \textit{security labels} with subjects and objects
+managed by the operating system. They enforce mandatory access control policies
+and track information flow using these security labels. One of the main
+differences between \selinux\ and Asbestos is that \selinux\ was constructed by
+augmented the Linux kernel, while Asbestos was designed afresh. Consequently,
+Asbestos exports new interfaces (\eg~a new system call interface), and
+applications must be modified or redesigned to run on Asbestos. In contrast,
+legacy applications can be supported on \selinux.
+
+While an ideal location to implement a reference monitor that mediates access
+to system resources, as argued in
+\sectref{chapter:overview:discussion:why-retrofit-the-server}, the operating
+system may not be suitable to implement a reference monitor that mediates
+access to resources managed by applications (unless the operating system is
+equipped with new primitives, as in Asbestos). There thus is an extensive body
+of research on implementing reference monitors that enforce
+application-specific authorization policies. For example, Java's security
+mechanism~\cite{ge03} implements the reference monitor as an object of type
+\code{AccessController}. Calls to the function
+\code{AccessController.checkPermission()} are placed at appropriate locations
+in code. These calls consult an authorization policy, and determine whether an
+access should be allowed.
+
+Inlined reference monitors (IRM) are another approach to implement reference
+monitors~\cite{e04}. In the IRM approach, security policies are specified as
+security automata (and are thus safety properties). For example, a policy to
+protect confidential data managed by a server can be ``disallow \code{send}
+operations over the network after a \code{read} operation of sensitive data''.
+These policies are enforced by \textit{inlining} the security automaton into
+the application to be secured. The application is rewritten by introducing new
+variables that track the state of the security automaton. These state variables
+are then used to determine whether a security-sensitive operation (\eg~a
+\code{send} or a \code{read}) should be allowed. IRMs have been used to
+implement a variety of security policies, including Java stack
+inspection~\cite{es00}. IRMs were implemented using the PoET/PSLang framework;
+the framework allows specification of security policies written as security
+automata, and rewrites Java bytecode to inline these security automata.
+Naccio~\cite{et99}, Polymer~\cite{blw05}, Ariel~\cite{ph99} and the work by Grimm
+and Bershad~\cite{gb01} are projects similar to the
+PoET/PSLang framework, and enforce safety policies by rewriting Java bytecode.
+However, each of these frameworks requires the security analyst to provide a
+description of the code patterns that represent a security-sensitive operation.
+These code patterns are used by the rewriting framework to identify locations
+that perform these security-sensitive operations. Erlingsson~\cite[Pages
+73--82]{e04} refers to the problem of identifying these code patterns as the
+\textit{security event synthesis problem}. These code patterns are akin to
+fingerprints, developed in this dissertation, and the fingerprint mining
+techniques presented in \chapref{chapter:dynamic} and \chapref{chapter:static}
+address the security event synthesis problem.
+
+%------------------------------------------------------------------------------
+\section{Code retrofitting and refactoring systems}
+\label{chapter:relatedwork:coderetrofits}
+
+There are numerous tools, both prototypes and commercial, that augment and/or
+modify existing code. These tools can be broadly classified as \textit{static
+tools} or \textit{runtime tools}, based upon whether they modify code
+statically or at runtime. While these tools have been used for a variety of
+applications ranging from performance debugging to adding extra functionality
+to legacy applications, this section discusses the application of these tools
+to application security.
+
+Tools that statically modify code can be further sub-categorized based upon
+whether they modify binary executables or source code.
+
+One of the first systems that augmented binary executables was the Informer
+execution profiler~\cite{dg71}, implemented in Berkeley SDS 940 time-sharing
+system. The primary purpose of binary modification in this case was to gather
+and filter profiling events. However, instrumentation could also be added to
+restrict memory accesses to profiler memory. This idea later appeared in
+Software Fault Isolation (SFI)~\cite{wla+93}, where binary executables were
+statically modified to restrict accesses to memory. While these systems
+implemented a fixed policy on memory accesses, more general binary rewriting
+tools, such as ATOM~\cite{se94} and its successors, Vulcan~\cite{esv01} and
+Phoenix~\cite{phoenix}, allow arbitrary modification, and thus enforcement of
+arbitrary security policies (\eg~specified as security automata). For example,
+Control-Flow Integrity~\cite{abe+05} is a sandboxing technique built on Vulcan
+that uses binary analysis and modification to restrict acceptable control flows
+in an application, and thus restrict the effect of control-hijacking attacks.
+While the tools described above work on machine code, several tools that work
+on Java bytecode have also been proposed. These include the PoET/PSLang
+framework~\cite{e04} discussed earlier, and the SOOT framework~\cite{soot},
+which provides intermediate representations and tools to analyze and modify
+Java bytecode.
+
+Among the tools that modify source code, CIL is a well-used
+framework~\cite{nmr+02} that allows analysis and modification of C source code.
+CIL simplifies and distills C code into a few constructs, which enables easy
+design and implementation of program analysis and transformation tools.  The
+algorithms that were discussed in \chapref{chapter:static} and
+\chapref{chapter:matching} were implemented in CIL. CIL has also been used for
+a variety of other code retrofitting and refactoring projects, including
+CCured~\cite{nch+05, nmw02}, which analyzes and instruments C programs to
+enforce type safety, as well as PrivTrans~\cite{bs04}, which statically
+partitions C programs to enforce privilege separation. 
+
+While all the above tools statically modify code, tools such as
+Valgrind~\cite{ns07}, Dyninst~\cite{dyninst,hmc94} and Dynamo~\cite{bdb00}
+allow arbitrary modification of code at runtime. These tools have also been
+used for security, \eg~to perform dynamic taint analysis~\cite{ns05} and for
+program shepherding (a sandboxing technique)~\cite{kba02}.
+
+%------------------------------------------------------------------------------
+\section{Aspect-oriented programming}
+\label{chapter:relatedwork:aopl}
+
+The approach to retrofitting legacy code presented in this dissertation follows
+the aspect-oriented programming paradigm (AOP)~\cite{aosd, klm+97}. An aspect
+is defined to be a concern, such as security or error-handling, that crosscuts
+a program. In aspect-oriented programming languages,
+(\eg~AspectJ~\cite{aspectj}, AspectC++~\cite{aspectc}) these concerns are
+developed independently, as advice. An aspect-weaver merges advice with the
+program at certain joinpoints. Pointcuts are often used to express a family of
+joinpoints (\eg~using regular expressions). Thus, pointcuts are patterns that
+succinctly represent joinpoints. The aspect weaver matches these patterns with
+the program to identify joinpoints.
+
+Drawing parallels to the approach presented in this dissertation, each location
+in source code where a reference monitor call must be inserted is a joinpoint.
+Because a fingerprint is a set of code patterns that identifies multiple such
+locations, each fingerprint is a pointcut. The matching algorithm and the
+associated program transformation implement compile-time aspect weaving, while
+the body of the reference monitor that executes at runtime to consult an
+authorization policy serves as the advice. Note that other projects, such as
+IRM~\cite{e04}, Naccio~\cite{et99} and Polymer~\cite{blw05}, as well as our own
+prior work on Tahoe~\cite{gjj05} follow the aspect-oriented programming
+paradigm.
+
+A key problem in aspect-oriented programming is that of identifying
+joinpoints---this is known as the problem of \textit{aspect mining}, and is an
+area of active current research. Concept analysis is one approach that has
+been used both in conjunction with static analysis as well as with dynamic
+analysis to mine aspects (Ceccato~\etal\ present a survey of such techniques
+\cite{cmm+05}). For example, concept analysis has been used on identifier names
+to statically find methods and classes that implement similar
+functionality~\cite{tm04}. Dynamic analysis in conjunction with concept
+analysis has been used to find methods that implement a particular
+feature~\cite{eks03,tc04}. The idea here is to run an instrumented version of
+the program under different use-cases and label the traces with these use
+cases.  Each trace contains information about the methods executed. Traces are
+then clustered using concept analysis to find crosscutting concerns, and thus
+identify aspects. 
+
+%------------------------------------------------------------------------------
+\section{Authorization policy formulation and analysis}
+\label{chapter:relatedwork:authpol}
+
+While this dissertation has focused on the problem of authorization policy
+enforcement, the problem of formulating appropriate authorization policies
+to meet site-specific security goals, and the problem of analyzing an existing
+policy to ensure that it meets site-specific security goals are also important
+to ensure security.
+
+Most prior work on authorization policy formulation has focused on formulating
+policies that ensure that an application satisfies the Principle of Least
+Privilege, \ie\ that an application has access to all, and only, those
+resources that it needs to accomplish its task~\cite{ss75}. Systrace~\cite{p03}
+and Polgen~\cite{hgh+05} are two such tools. Both these tools run the program
+for which a policy is to be written, and observe the set of resource accesses
+that it makes during a training phase. Audit logs generated during the training
+phase are examined, and are appropriately converted into policy statements.
+Note that this is also the intended usage of the \code{audit2allow} tool from
+the \selinux\ policy development toolkit~\cite{tresys2}.
+
+Work on analyzing authorization policies focuses on ensuring that these
+policies conform to site-specific security goals. For example, the Gokyo
+tool~\cite{jsz03} analyzes \selinux\ authorization policies to detect integrity
+violations. Guttman \etal~\cite{ghr+05} present the use of LTL model checking
+to analyze \selinux\ policies. Desirable safety properties are expressed as LTL
+formulae. Appropriately expressed \selinux\ policies and LTL formulae are then
+fed to the SPIN model checker~\cite{h03}, which reports violations of these
+safety properties.
+
+%------------------------------------------------------------------------------
+\section{Other related work}
+\label{chapter:relatedwork:misc}
+
+This section presents related work in two areas, namely, root-cause analysis,
+where the techniques developed are related to dynamic fingerprint mining, and
+X window system security, where there is a rich body of work from the early
+nineties on securing the \xserver.
+
+%------------------------------------------------------------------------------
+\subsection{Root-cause analysis}
+\label{chapter:relatedwork:root-cause}
+
+Because fingerprints denote code patterns that embody security-sensitive
+operations, mining fingerprints is akin to mining root-causes of
+security-sensitive operations. There is a rich body of research on root-cause
+analysis techniques, developed primarily for debugging.  Most existing root-cause
+analysis techniques use ``good'' and ``bad'' traces to localize the root-cause
+of a bug~\cite{cz05,l04,z99}. The dynamic fingerprint mining technique
+presented in \chapref{chapter:dynamic} is similar to these techniques because
+it classifies program traces and uses this classification to find fingerprints
+of security-sensitive operations. The primary difference between these
+techniques and the dynamic fingerprint mining technique in
+\chapref{chapter:dynamic} is that our technique uses a much richer set of
+labels for runtime traces, namely an arbitrary set of security-sensitive
+operations, rather than just ``good'' or ``bad''. As a result, our technique
+uses the more general concept of set equations (rather than the
+traditionally-used trace differencing technique) to mine fingerprints.  Another
+approach for trace analysis (primarily for debugging) is dynamic
+slicing~\cite{ah90,kr97,zg03}.  Dynamic slicers use data-flow analysis to work
+backwards from the effect of a vulnerability, such as a program crash, to the
+cause of the vulnerability. An interesting avenue for future research will be
+to adapt the dynamic fingerprint mining technique presented in
+\chapref{chapter:dynamic} to use dynamic slicing to work backwards from the
+effect of a security-sensitive operation (a tangible side-effect) to the
+fingerprint of the operation.
+
+%------------------------------------------------------------------------------
+\subsection{X Window system security}
+\label{chapter:relatedwork:xwindow}
+
+There is a rich body of work on techniques to secure the \xserver.  Because the
+\xserver\ was historically developed to promote cooperation between \xclients,
+security (\eg~isolation) of \xclients\ was not built into the design of the
+server. The X protocol, which \xclients\ use to communicate with the \xserver,
+has well-documented security flaws, too~\cite{w96b}. Prior work to rectify this
+situation has focused on identifying security requirements for the \xserver,
+and creating secure versions of the \xserver. Most of this work was carried out
+in the context of the Compartmented Mode Workstation~\cite{bpw+90,ep91,p91},
+and the Trusted~X projects~\cite{emo+93,e90}, which built prototype windowing
+systems to meet the Trusted Computer System Evaluation Criteria. While these
+efforts focus on retrofitting the \xserver, there is also work on building
+\xserver-like window systems, with security proactively designed into the
+system, \eg~the Nitpicker secure GUI system~\cite{fh05} and the EROS trusted
+window system~\cite{svn+04}. McCune \etal~\cite{mpr06} present a system to
+specifically address the threat of malware that steal sensitive user input by
+exploiting weaknesses in the \xserver\ by establishing a trusted channel
+between the input device and the target application.
+
+The X~security~extension~\cite{w96a} extends the \xserver\ by enabling it to
+enforce authorization policies. It does so by placing reference monitor calls
+at appropriate locations in the \xserver, as discussed in this dissertation. To
+the best of our knowledge, these calls were placed manually, and thus the
+techniques presented in this dissertation could have assisted in that effort.
+However, the X~security~extension is quite limited in the policies that it can
+enforce.  It statically partitions clients into \subjlab{Trusted}, and
+\subjlab{Untrusted}, and only enforces policies on interactions between these
+two classes of clients.  Thus for example, if three clients, with
+security-labels \subjlab{Top-secret}, \subjlab{Confidential}, and
+\subjlab{Unclassified} connect to the \xserver\ simultaneously, the
+X~security~extension will group two of them into the same category, and will
+not enforce policies on clients in the same category.  The techniques presented
+in this dissertation can retrofit the \xserver\ with mechanisms to enforce
+arbitrary authorization policies.
+
+
+%------------------------------------------------------------------------------

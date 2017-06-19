@@ -1,0 +1,84 @@
+\chapter{Conclusions and Future Work}
+\label{chapter:conclusions}
+
+While it is ideal to proactively design software systems for security, economic
+and practical considerations often preclude this in practice. This motivates the
+need for retroactive techniques to analyze and transform legacy code for
+security.
+
+This dissertation has presented techniques to analyze and retofit legacy code
+with mechanisms for authorization policy enforcement. It introduced
+fingerprints, a low-level language to represent security-sensitive operations,
+and showed that fingerprints can be used to identify locations in source code
+that must be guarded by reference monitor calls. A central contribution of this
+dissertation is a set of techniques based upon static and dynamic program
+analysis to mine fingerprints by analyzing legacy code.
+
+However, the work presented in this dissertation is not without its
+limitations, and there are several directions in which to extend the work
+presented in this dissertation to overcome these limitations.
+
+\begin{enumerate}
+%
+\item \textbf{Reducing the size of the TCB.} As discussed in
+\sectref{chapter:overview:tcb}, a key shortcoming of the approach presented in
+this dissertation is that it increases the size of the TCB. In particular, the
+legacy software system that is being retrofit is assumed to be benign. As a
+result, the TCB must be extended to include the legacy software system. An
+interesting future direction will be to examine techniques to enforce
+authorization policies without increasing the size of the TCB. One way to
+achieve this will be to redesign the operating system (which is traditionally
+included in the TCB) to enforce application-level authorization policies. A key
+challenge here will be to do so while remaining compatible with legacy
+applications.
+
+\item \textbf{Achieving soundness and completeness.} The fingerprint-based
+approach presented in this dissertation is neither \textit{sound} nor
+\textit{complete}.  Consequently, it is not completely automatic and requires
+manual intervention to prune false positives (which result because the approach
+is not sound) and identify false negatives (which result because the approach
+is not complete).
+
+The approach is not sound primarily because of the limited expressive power of
+the language that is currently used to represent fingerprints. Two extensions
+to the language will greatly improve its expressive power. First, the language
+must be extended to express temporal relationships between code patterns,
+\eg~using finite state automata to express fingerprints. Second, the language
+must be extended to include data-flow information. Augmenting the language with
+data-flow information will enable the expression of fine-grained information
+that determines how resources are affected by a security-sensitive operation.
+
+The approach lacks completeness for unsafe languages (such as C). As discussed
+in \sectref{chapter:static:section:limitations}, this is a consequence of
+type-safety violations, such as those caused by pointer aritmetic and direct
+writes to memory. One approach to achieving completeness is to add extra
+runtime checks (\textit{\'{a} la} CCured~\cite{nch+05,nmw02}) to the
+retrofitted program to ensure type safety.  The resulting retrofitted system
+will contain checks that enforce type safety in addition to those that enforce
+site-specific authorization policies.
+%
+\item \textbf{Automating failure handling.} An important issue that has been
+side-stepped by the approach presented in this dissertation is, ``how to handle
+failed authorization policy checks?'' While the primary goal is to ensure that
+a security-sensitive operation is never performed when an authorization policy
+check fails, an important secondary goal is to ensure that the server notifies
+clients in such a way that the failed check is handled gracefully by the
+clients. For example, failure to create a new window or copy from a window must
+not crash an \xclient\ that requested this operation. In current work, we defer
+the task of implementing failure handling code to a human. An interesting
+future direction will be to investigate automated techniques to gracefully
+handle failure in a principled and automated way.
+%
+\item \textbf{Enforcing policies on unmodified binaries.} The approach
+presented in this dissertation modifies legacy (source) code by retrofitting it
+with authorization checks. An interesting future direction will be to
+investigate techniques to enforce authorization policies on unmodified
+binaries. Doing so will require constructing a runtime envionment that will
+enforce authorization policies as code executes. Such a runtime environment
+will enable the enforcement of authorization policies on commercial
+off-the-shelf servers that may not be amenable to analysis and transformation.
+% 
+\end{enumerate}
+
+The above directions provide fodder for much future research and
+experimentation.

@@ -1,0 +1,70 @@
+\contentsline {chapter}{LIST OF TABLES}{v}
+\contentsline {chapter}{LIST OF FIGURES}{vi}
+\contentsline {chapter}{NOMENCLATURE}{vii}
+\contentsline {chapter}{ABSTRACT}{viii}
+\contentsline {chapter}{\numberline {1}{ {Introducing the {\tt withesis} \LaTeX {} Style Guide}}}{1}
+{\ifnum \value {tocdepth} > 0 {\vskip 1.0em plus 1pt} \fi }
+\contentsline {section}{\numberline {1.1}History}{1}
+\contentsline {section}{\numberline {1.2}Producing Your Thesis or Dissertation}{1}
+\contentsline {subsection}{\numberline {1.2.1}Required Paper}{2}
+\contentsline {subsection}{\numberline {1.2.2}Copyright Page}{2}
+\contentsline {subsection}{\numberline {1.2.3}Prechecks}{3}
+\contentsline {subsection}{\numberline {1.2.4}Final Checks}{3}
+\contentsline {section}{\numberline {1.3}Disclaimer}{3}
+\contentsline {chapter}{\numberline {2}{ {Essential \LaTeX {}}}}{4}
+{\ifnum \value {tocdepth} > 0 {\vskip 1.0em plus 1pt} \fi }
+\contentsline {section}{\numberline {2.1}Introduction}{4}
+\contentsline {section}{\numberline {2.2}How does \LaTeX {} work?}{4}
+\contentsline {section}{\numberline {2.3}A Sample \LaTeX {} file}{6}
+\contentsline {subsection}{\numberline {2.3.1}Running Text}{6}
+\contentsline {subsection}{\numberline {2.3.2}\LaTeX {} Commands}{8}
+\contentsline {subsection}{\numberline {2.3.3}Overall structure}{9}
+\contentsline {subsection}{\numberline {2.3.4}Other Things to Look At}{9}
+\contentsline {section}{\numberline {2.4}Document Classes and Class Options}{10}
+\contentsline {section}{\numberline {2.5}Environments}{11}
+\contentsline {subsection}{\numberline {2.5.1}Quotations}{11}
+\contentsline {subsection}{\numberline {2.5.2}Centering and Flushing}{12}
+\contentsline {subsection}{\numberline {2.5.3}Lists}{13}
+\contentsline {subsection}{\numberline {2.5.4}Tables}{13}
+\contentsline {subsection}{\numberline {2.5.5}Verbatim Output}{14}
+\contentsline {section}{\numberline {2.6}Type Styles}{15}
+\contentsline {section}{\numberline {2.7}Sectioning Commands and Tables of Contents}{15}
+\contentsline {section}{\numberline {2.8}Producing Special Symbols}{16}
+\contentsline {section}{\numberline {2.9}Titles}{17}
+\contentsline {section}{\numberline {2.10}Errors}{17}
+\contentsline {section}{\numberline {2.11}A Final Reminder}{20}
+\contentsline {chapter}{\numberline {3}{ {Figures and Tables}}}{21}
+{\ifnum \value {tocdepth} > 0 {\vskip 1.0em plus 1pt} \fi }
+\contentsline {section}{\numberline {3.1}Tables}{22}
+\contentsline {section}{\numberline {3.2}Figures}{23}
+\contentsline {subsection}{\numberline {3.2.1}\tt gnuplot}{23}
+\contentsline {subsection}{\numberline {3.2.2}PostScript}{24}
+\contentsline {chapter}{\numberline {4}{ {Citations and Bibliographies}}}{26}
+{\ifnum \value {tocdepth} > 0 {\vskip 1.0em plus 1pt} \fi }
+\contentsline {section}{\numberline {4.1}The Citation Command}{26}
+\contentsline {section}{\numberline {4.2}Bibliography Styles}{26}
+\contentsline {section}{\numberline {4.3}The Database}{27}
+\contentsline {section}{\numberline {4.4}Putting It All Together}{28}
+\contentsline {chapter}{\numberline {5}{ {Using the {\tt withesis} Style}}}{30}
+{\ifnum \value {tocdepth} > 0 {\vskip 1.0em plus 1pt} \fi }
+\contentsline {section}{\numberline {5.1}The Root File and the Preamble}{31}
+\contentsline {section}{\numberline {5.2}Prelude}{33}
+\contentsline {section}{\numberline {5.3}The Body}{36}
+\contentsline {section}{\numberline {5.4}Additional Theorem Like Environments}{37}
+\contentsline {section}{\numberline {5.5}Bibliography or References}{37}
+\contentsline {section}{\numberline {5.6}Appendices}{37}
+\contentsline {chapter}{LIST OF REFERENCES}{39}
+ \addvspace {1.0em plus 1pt} \hbox to \hsize {\bf APPENDICES \hfil } \addvspace {1.0em plus 1pt}
+{\setcounter {tocdepth}{0}}
+\contentsline {appendices}{\numberline {Appendix\ A:}{Matlab Code}}{40}
+\contentsline {appendices}{\numberline {Appendix\ B:}{BibT\kern -.1667em\lower .5ex\hbox {E}\kern -.125emX\spacefactor \@m \ Entries}}{42}
+\contentsline {appendices}{\numberline {Appendix\ C:}{Mathematics Examples}}{44}
+{\ifnum \value {tocdepth} > 0 {\vskip 1.0em plus 1pt} \fi }
+\contentsline {section}{\numberline {C.1}Matrices}{44}
+\contentsline {section}{\numberline {C.2}Multi-line Equations}{44}
+\contentsline {section}{\numberline {C.3}More Complicated Equations}{45}
+\contentsline {appendices}{\numberline {Appendix\ D:}{Adobe Acrobat (\unhbox \voidb@x \hbox {\tt *.pdf}) Files}}{47}
+{\ifnum \value {tocdepth} > 0 {\vskip 1.0em plus 1pt} \fi }
+\contentsline {section}{\numberline {D.1}Converting from {\tt *.ps} to \unhbox \voidb@x \hbox {\tt *.pdf}}{47}
+\contentsline {section}{\numberline {D.2}Converting from {\tt *.dvi} to \unhbox \voidb@x \hbox {\tt *.pdf}}{48}
+\contentsline {section}{\numberline {D.3}Generating \unhbox \voidb@x \hbox {\tt *.pdf}{} Initially}{48}

@@ -1,0 +1,1232 @@
+\chapter{Mining Fingerprints using Static Program Analysis}
+\label{chapter:static}
+
+This chapter develops a technique that uses static program analysis and a
+clustering technique, called concept analysis~\cite{w82}, to mine fingerprints
+of security-sensitive operations. This technique directly addresses the main
+shortcomings of the dynamic program analysis technique presented in the
+previous chapter. In particular, the technique mines fingerprints without
+the need for an \apriori\ description of security-sensitive operations.
+Further, because static program analysis ensures better coverage than dynamic
+analysis, the technique presented in this chapter can mine more fingerprints 
+than the technique in the previous chapter. This chapter also presents three
+case studies, showing the application of this technique to mine fingerprints
+of security-sensitive operations for the Linux \ext\ file system, the \xserver,
+and PennMUSH, a multi-user dungeon. 
+
+%------------------------------------------------------------------------------
+\section{Problem statement} 
+\label{chapter:static:problem}
+
+Given a server program, and the data types of resources, accesses to which must
+be protected, the technique presented in this chapter outputs \textit{building
+blocks} that satisfy Property~\ref{chapter:static:property:fingerprint} defined
+below. These building blocks can be used to construct fingerprints
+\footnote{For the rest of this chapter, we will relax the strict syntactic
+definition of a fingerprint (as in \figref{figure:fingerprint-definition}), and
+refer to a fingerprint as a set of code patterns instead. The interpretation of
+a fingerprint remains unchanged with this syntax: the set of code patterns in a
+fingerprint represents all the resource accesses needed to perform the
+security-sensitive operation represented by that fingerprint.}.
+
+\begin{property}[Happens together]
+%
+A building block $BB$ output by the technique presented in this chapter is a
+set of code patterns $BB$~=~\{\textit{pat$_1$}, $\ldots$, \textit{pat$_m$}\}
+that satisfies the following property: if one of the code patterns
+\textit{pat$_i$} in $BB$ appears in any valid execution trace of the server,
+then \textit{all} the code patterns in $BB$ appear in that trace.
+%
+\label{chapter:static:property:fingerprint}
+%
+\end{property}
+
+Thus, the building blocks satisfying
+Property~\ref{chapter:static:property:fingerprint} represent resource accesses
+that are always performed together. Our hypothesis is that building blocks
+satisfying Property~\ref{chapter:static:property:fingerprint} can be used to
+construct fingerprints of security-sensitive operations. Intuitively, this is
+because such a set denotes the set of resource accesses that must be performed
+to achieve a high-level operation on the resource (\eg~an operation such as
+\op{Window\_Map} or \op{Window\_Enumerate}).  Indeed, in our experiments with
+the Linux \ext\ file system and the \xserver, we found that the building blocks
+output by the technique were excellent indicators of security-sensitive
+operations identified manually (and independently, in the LSM
+project~\cite{wcs+02} and the X11/\selinux~project~\cite{ksv03}, respectively).
+
+
+%------------------------------------------------------------------------------
+\section{Identifying fingerprints using static program analysis and concept
+analysis} 
+\label{chapter:static:overview}
+
+This section presents a high-level overview of our technique. Using a running
+example, it demonstrates how a software engineer would use this technique to
+mine fingerprints of security-sensitive operations. The entire process is 
+depicted in \tabref{table:static-toolchain}.
+
+%------------------------------------------------------------------------------
+\subsection{Running example} 
+%
+We use a subset of \ext, a Linux file system, and one of the case studies in
+\sectref{chapter:static:section:results} as our running example. In particular,
+\ext\ is responsible for laying out and interpreting disk blocks as belonging
+to specific files or directories. It represents metadata information using
+several internal data structures. This metadata is used to retrieve files and
+directories from raw disk blocks.
+
+File systems on Linux are pluggable, and must thus export a standard API to the
+kernel. A system call that manipulates files or directories ultimately resolves
+to one or more calls to this API. The relevant file system functions then serve
+this request. Thus a file system is a server that manages files and
+directories.  For \ext,  we considered  $10$ API functions related to
+manipulation of directories (\eg~\code{ext2\_rmdir}, \code{ext2\_mkdir} and
+\code{ext2\_readdir}). We show how our technique can identify
+security-sensitive operations that \ext\ performs on directories.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{table}[ht!]
+\begin{center}
+\begin{tabular}{|c|p{2.8in}|p{2.8in}|}
+\multicolumn{3}{ c }
+{\begin{minipage}{6.0in}
+\ifpdf
+\centerline{\includegraphics[keepaspectratio=true,width=6.0in]{figures/pdf/static-toolchain.pdf}}
+\else
+\centerline{\includegraphics[keepaspectratio=true,width=6.0in]{figures/eps/static-toolchain.eps}}
+\fi
+\end{minipage}\indent\vspace{0.2cm}}\\\hline
+\textbf{Step} & \multicolumn{1}{|c|}{\textbf{Description}} &
+\multicolumn{1}{|c|}{\textbf{Techniques used}}\\\hline
+%
+\textbf{A} & 
+Extraction of building blocks from source code. &
+Static analysis and concept analysis.\\\hline
+%
+\textbf{B} &
+Refinement of building blocks. &
+Application of constraints and interpretation of fingerprints.\\\hline
+%
+
+\end{tabular} 
+\end{center} 
+%
+\mycaption{Steps to statically mine fingerprints of security-sensitive
+operations, and the techniques used in each step. Static analysis is first 
+used in conjunction with concept analysis to extract building blocks. These
+building blocks are refined/composed to yield fingerprints.}
+{\label{table:static-toolchain}} 
+%
+\end{table}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%------------------------------------------------------------------------------
+\subsection{Step A: From source code to building blocks}
+\label{chapter:static:overview:stepa}
+%
+In the first step, we employ static source code analysis and identify different
+ways in which \ext\ accesses shared resources in response to client requests.
+
+To do so, we must first identify resources, accesses to which must be
+authorized. As before, we express the resources to be protected using their
+data types. For \ext, these resources include internal data structures used to
+represent files and directories. These data structures are specified by a
+domain expert, and for \ext\ they are variables of type \code{inode},
+\code{ext2\_dirent}, \code{ext2\_dir\_entry\_2} and \code{address\_space}, each
+of which is a C \code{struct}. 
+
+We also assume that a client accesses server resources only via the server's
+API.  With \ext, this is indeed the case, and as mentioned earlier \ext\
+exports a well-defined API to the kernel. The inputs to our static analyzer are
+thus the source code of \ext, and two files, specifying, respectively, the
+types of resource data structures, accesses to which must be authorized,
+and a set of API functions. 
+
+The static analyzer identifies how these resource data structures are
+manipulated by the \ext\ API. It does so by distilling each statement of \ext\
+source code into a (possibly empty) set of code patterns. Code patterns are as
+defined in \figref{figure:fingerprint-definition}, and include \textit{Read}s,
+\textit{Write}s and \textit{Call}s. For example, the C~statement
+\code{de->file\_type = 0}, where \code{de} is a variable of type
+\code{ext2\_dirent} is distilled to \textit{Write}~\code{0}~\textit{To}
+\code{ext2\_dirent->file\_type}. Note in particular that this transformation
+ignores specific variable names and focuses instead on types of variables. As a
+result, we identify generic resource manipulations but not the specific
+instance of the resource (\eg~the instance \code{de}) that they happen on.
+
+Statements that do not manipulate resource data structures are ignored.
+\textit{Call} code patterns correspond to calls via unresolved function
+pointers. For each function \code{ext2\_api} in the \ext\ API, the static
+analyzer then aggregates code patterns of all statements potentially reachable
+via a call to \code{ext2\_api}. Thus, at the end of this step each \ext\ API
+function \code{ext2\_api} is associated with a set of code patterns
+\cp{\code{ext2\_api}}. Intuitively, \cp{\code{ext2\_api}} denotes all possible
+ways in which \code{ext2\_api} can potentially manipulate tracked resources.
+
+The next step is to find sets of code patterns that always appear together
+during server execution. That is, if one code pattern from a set of code
+patterns appears in an execution of \ext, then all the other code patterns from
+that set appear in that execution as well (\ie~a set of code patterns
+satisfying Property~\ref{chapter:static:property:fingerprint}). Note that we
+can have sets \{\textit{pat}\} with singleton code patterns as well, denoting
+that no other code pattern always appears together with \{\textit{pat}\}. Each
+set of such code patterns denotes an idiomatic way in which a resource is
+manipulated by \ext, and potentially indicates a security-sensitive operation.
+Each such set is called a \textit{building block}.
+
+We identify building blocks using concept analysis~\cite{w82}, a
+well-known hierarchical clustering technique. At a high-level (details are
+presented in \sectref{chapter:static:section:despat}), concept analysis
+identifies building blocks, as well as the API functions whose code
+pattern sets contain these building blocks. 
+
+For example, concept analysis inferred that the set of six code patterns shown
+in \figref{figure:candfprmdir} is a building block, and that it appears
+in \cp{\code{ext2\_rename}}, \cp{\code{ext2\_rmdir}} and
+\cp{\code{ext2\_unlink}}.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{figure}[ht!]
+\begin{center}
+\begin{tabular}{|r l|}
+\hline
+{$(1)$} & \textit{Read} \code{address\_space->host}\\
+{$(2)$} & \textit{Read} \code{ext2\_dir\_entry\_2->rec\_len}\\
+{$(3)$} & \textit{Write} \code{0}~\textit{To} \code{ext2\_dir\_entry\_2->inode}\\
+{$(4)$} & \textit{Read} \code{inode->i\_mtime}\\
+{$(5)$} & \textit{Read} \code{inode->u->ext2\_inode\_info->i\_dir\_start\_lookup}\\
+{$(6)$} & \textit{Write}~\unk~\textit{To}
+\code{inode->u->ext2\_inode\_info->i\_dir\_start\_lookup}\\\hline
+\end{tabular}
+\end{center}
+\mycaption{One of the building blocks that concept analysis identifies
+for \ext.}{\label{figure:candfprmdir}}
+\end{figure}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+For \ext, we identified $18$ such building blocks, each denoting a
+unique way in which \ext\ manipulates files and directories. While concept
+analysis is asymptotically inefficient---its complexity is exponential in
+$\max$$_i$({$|$\cp{\code{ext2\_api$_i$}}$|$})---our experiments showed that it
+is efficient in practice. In particular, our analysis completed in about $2$
+seconds for \ext, and in just over $310$ seconds for the largest of our
+case studies.
+
+%------------------------------------------------------------------------------
+\subsection{Step B: Refining building blocks}
+\label{chapter:static:overview:stepb}
+%
+In the second step, a domain expert (i) refines building blocks obtained
+from Step~A and (ii) post refinement, determines, for each fingerprint, whether
+it embodies a security-sensitive operation that must be mediated by an
+authorization policy lookup.
+
+Refinement of building blocks is necessary for two reasons. 
+
+\begin{itemize}
+%
+\item The first reason is because the code analysis employed in Step~A is
+imprecise. As a result, a set of code patterns that appears in the results of
+concept analysis may not satisfy
+Property~\ref{chapter:static:property:fingerprint}.  There are two ways in
+which precision is lost:
+%
+\begin{enumerate}
+%
+\item The static analysis algorithm employed in Step~A is
+\textit{flow-insensitive}. A building block may contain a pair of code patterns
+\textit{pat$_1$}, \textit{pat$_2$} that do not always appear together in all
+executions of the server (thus violating
+Property~\ref{chapter:static:property:fingerprint}).
+%
+\item We ignore specific instances of resources that are manipulated and focus
+instead on their types. Thus, a building block may contain manipulations of
+multiple, possibly unrelated, resources.  
+%
+\end{enumerate}
+%
+We employ \textit{precision constraints} to identify such cases and enable
+refinement of each building block, separating the code patterns that it
+contains into several fingerprints.  Intuitively, a precision constraint is a
+rule that determines the set of code patterns that can be grouped together in a
+fingerprint. 
+%
+\item The second reason why refinement is necessary is because a domain expert
+may deem that a set of code patterns is irrelevant for the authorization
+policies to be enforced for the server, or may wish to separate or group
+together a pair of code patterns in a fingerprint of a security-sensitive
+operation. Such \textit{domain-specific constraints} further refine building
+blocks.
+%
+\end{itemize}
+
+For example, consider the building block shown in
+\figref{figure:candfprmdir}. Using the output of our static analysis tool, we
+were able to determine that the code patterns $(1)$-$(4)$ appear together in
+each successful invocation of the \ext\ function \code{ext2\_delete\_entry} and
+that the code patterns $(5)$ and $(6)$ appear together in each successful
+invocation of the function \code{ext2\_find\_entry}. Each of the three API
+functions, \code{ext2\_rename}, \code{ext2\_rmdir} and \code{ext2\_unlink},
+that contain this building block call both these functions. Both
+\code{ext2\_rmdir} and \code{ext2\_unlink} call these functions on the
+\textit{same} resource instance, namely the directory being removed (or
+unlinked). However, as \figref{figure:precision-constraints-eg} shows, while
+\code{ext2\_rename} calls both these functions on the instances \code{old\_dir}
+and \code{old\_dentry},\footnote{The variable \code{old\_de}, which
+\code{ext2\_delete\_entry} is invoked with on
+line~\ref{line:preccons:ext2deleteentry} is derived from \code{old\_dir} and
+\code{old\_dentry}.} it calls \code{ext2\_find\_entry} only on the instances
+\code{new\_dir} and \code{new\_dentry} when a certain predicate
+\code{new\_inode} is satisfied. 
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{figure}[ht!]
+%
+\begin{center}
+\newsavebox{\precisionconstraintsmotiv}
+\begin{lrbox}{\precisionconstraintsmotiv}
+\begin{minipage}[ht]{5.7in}
+\lstset{
+language=C,
+tabsize=4,
+basicstyle=\ttfamily\footnotesize,
+keywordstyle=\sffamily\bfseries,
+commentstyle=\rmfamily\emph\footnotesize,
+morekeywords={ext2_rename, ext2_find_entry, ext2_delete_entry},
+morecomment=[s][\rmfamily\bfseries\emph\footnotesize\underbar]{/**}{*/},
+escapeinside={/*@}{@*/}
+}
+\begin{lstlisting}[numbers=left, firstnumber=1]
+int ext2_rename (inode *old_dir, dentry *old_dentry, 
+                 inode *new_dir, dentry *new_dentry) {
+    /* Declarations of old_page, new_page, old_de and new_de */
+    new_inode = new_dentry->d_inode; /*@ \label{line:preccons:newinodeinit} @*/
+    ...
+    old_de = ext2_find_entry (old_dir, old_dentry, &old_page); /*@ \label{line:preccons:ext2findentry1} @*/
+    if (new_inode) { 
+        ...
+        new_de = ext2_find_entry(new_dir, new_dentry, &new_page); /*@ \label{line:preccons:ext2findentry2} @*/
+        ...
+    } 
+    else { 
+        ...
+        /* No call to ext2_find_entry in this branch */
+        ...
+    };
+    ...
+    ext2_delete_entry(old_de, old_page); /*@ \label{line:preccons:ext2deleteentry} @*/
+    ...
+}
+\end{lstlisting}
+\end{minipage}
+\end{lrbox}\fbox{\usebox{\precisionconstraintsmotiv}}
+\end{center}
+\mycaption{Example showing the need for precision constraints.}
+{\label{figure:precision-constraints-eg}}
+\end{figure}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+Because \code{ext2\_rename} performs the resource manipulations corresponding
+to code patterns $(5)$ and $(6)$ on additional resource instances as compared
+to the code patterns $(1)$-$(4)$, code patterns $(1)$-$(4)$ and $(5)$-$(6)$
+likely represent different security-sensitive operations. Imposing the
+constraint that code patterns on different resource instances must be part of
+separate fingerprints, the building block shown in
+\figref{figure:candfprmdir} is split into two parts, as shown in
+\figref{figure:refined-fingerprints}.  Additional examples of the use of
+precision constraints appear in \sectref{section:constraints}.  Note that such
+constraints can potentially be avoided with sophisticated program analyses,
+which we plan to explore in future work. However, in our case studies we found
+that more than $50\%$ of the building blocks did not require refinement.
+Thus our current approach provides a good tradeoff between precision of results
+and simplicity of the code analysis algorithm.
+
+Domain-specific constraints encode rules that are formulated by a
+domain-expert.  In particular, whether the resource manipulation embodied by a
+fingerprint is security-sensitive depends on the set of policies that must be
+enforced on clients. For example, it may only be necessary to protect the
+integrity of directories, and not their confidentiality. In this case,
+fingerprints that embody a write operation on directories are
+security-sensitive, while fingerprints that embody a read operation are not.
+Fingerprints expose possible operations on resources, and let an administrator
+decide whether an operation is security-sensitive or not. For example, an
+analyst may decide that Fingerprint~(2) in
+\figref{figure:refined-fingerprints}, which corresponds to a directory lookup,
+is not interesting for a specific set of policies to be enforced. 
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{figure}[ht!]
+\begin{center}
+\begin{tabular}{|r l|}
+\hline
+\multicolumn{2}{|l|}{Fingerprint~(1)}\\
+{$(1)$} & \textit{Read} \code{address\_space->host}\\
+{$(2)$} & \textit{Read} \code{ext2\_dir\_entry\_2->rec\_len}\\
+{$(3)$} & \textit{Write} \code{0}~\textit{To} \code{ext2\_dir\_entry\_2->inode}\\
+{$(4)$} & \textit{Read} \code{inode->i\_mtime}\\\hline\hline
+\multicolumn{2}{|l|}{Fingerprint~(2)}\\
+{$(5)$} & \textit{Read} \code{inode->u->ext2\_inode\_info->i\_dir\_start\_lookup}\\
+{$(6)$} & \textit{Write}~\unk~\textit{To} \code{inode->u->ext2\_inode\_info->i\_dir\_start\_lookup}\\\hline
+\end{tabular}
+\end{center}
+\mycaption{Fingerprints obtained after refinement with precision constraints.}
+{\label{figure:refined-fingerprints}}
+\end{figure}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+After refinement, the domain expert assigns semantics to each fingerprint,
+associating it with a security-sensitive operation. For example,
+Fingerprint~(1) in \figref{figure:refined-fingerprints} embodies the directory
+removal operation, while Fingerprint~(2) embodies the lookup operation. The LSM
+project~\cite{wcs+02} has identified a comprehensive set of security-sensitive
+operations for Linux by considering a wide range of policies to be enforced,
+including security-sensitive operations on the file system. It turns out that
+Fingerprint~(1) embodies the LSM operation \op{Dir\_Remove\_Name}, while
+Fingerprint~(2) embodies the LSM operation \op{Dir\_Search}. Thus, at the end
+of the second step, we have a set of fingerprints, each of which is associated
+with a security-sensitive operation.
+%------------------------------------------------------------------------------
+
+%------------------------------------------------------------------------------
+\section{Extracting building blocks from code}
+\label{chapter:static:section:despat}
+
+This section discusses Step~A in detail. We discuss the use of static analysis
+to identify resource manipulations potentially performed by each API function,
+and concept analysis to find building blocks.
+
+%------------------------------------------------------------------------------
+\subsection{Static analysis}
+\label{chapter:static:section:despat:staticanalysis}
+%
+\aref{algorithm:staticanalysis} describes the static code analysis that we have
+implemented (in CIL~\cite{nmr+02}).
+Lines~\ref{line:fia-start}-\ref{line:fia-end} employ a simple flow-insensitive
+analysis to extract for each function a set of code patterns describing how the
+function manipulates resource data structures.  While this step sacrifices
+precision, it simplifies the rest of the analysis by making the output amenable
+to concept analysis. As described earlier, we recover some of the precision
+lost in this step by applying precision constraints.  While we intend to
+explore in future work how a flow-sensitive program analysis can interact with
+concept analysis, we have found that our current implementation offers a
+reasonable tradeoff between simplicity of analysis and precision of the results
+obtained.  Lines~\ref{line:codepats-start}-\ref{line:codepats-end} compute
+\cp{\code{api$_i$}}, the set of resource accesses performed by \code{api$_i$},
+for each API function \code{api$_i$} of the server by finding functions in the
+call-graph reachable from \code{api$_i$}. We resolve calls through function
+pointers using a simple pointer analysis: each function pointer can resolve to
+any function whose address is taken and whose type signature matches that of
+the function pointer. This analysis is conservative in the absence of
+type-casts, but may miss potential targets in the presence of type-casts. 
+
+Recall that \cp{\code{api$_i$}} is the set of resource accesses that a client
+can perform by invoking API function \code{api$_i$}. However, we would like to
+identify resource accesses satisfying
+Property~\ref{chapter:static:property:fingerprint}, \ie~we would like to
+identify sets $BB$~=~\{\textit{pat$_1$}, $\ldots$, \textit{pat$_m$}\} such that
+if one of the code patterns \textit{pat$_i$}$\in$$BB$ appears in any valid
+execution trace of the server, then \textit{all} the patterns in $BB$ appear in
+that trace. 
+
+Note that Property~\ref{chapter:static:property:fingerprint} implies that each
+building block $BB$ is such that either $FP$~$\subseteq$~\cp{\code{api$_i$}} or
+$BB$~$\cap$~\cp{\code{api$_i$}}~=~$\emptyset$, for each API function
+\code{api$_i$}.  As described below, we use concept analysis to identify a set
+of building blocks. Each building block may then be used to construct
+fingerprints.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\restylealgo{boxed}\linesnumbered
+\begin{algorithm}[ht!]
+%
+\SetVline
+\KwName{\algoname{Extract\_Code-Patterns}{(Server, API, RSC)}}
+%
+\KwIn{
+(i)~Server: source code of server,\\
+(ii)~API=\{\code{api$_1$}, $\ldots$, \code{api$_n$}\}: set of API functions of Server, and\\
+(iii)~RSC: data types of sensitive resources.
+}
+%
+\KwOut{\cp{\code{api$_1$}}, $\ldots$, \cp{\code{api$_n$}},
+for \code{api$_1$}, $\ldots$, \code{api$_n$}~$\in$~API.}
+%
+\ForEach{(function \code{f} in Server)}{
+\nllabel{line:fia-start}
+  Summary(\code{f}) := $\emptyset$\;
+  \ForEach{(statement \textit{s}~$\in$~\code{f} that affects a data structure
+  of type $\in$ RSC)}{
+    CP := Decomposition of \textit{s} into code patterns 
+    (see~\bnfnterm{Code-Pattern} in \figref{figure:fingerprint-definition})\;
+    Summary(\code{f}) := Summary(\code{f}) $\cup$ CP\;
+    \nllabel{line:fia-end}
+  }
+}
+%
+\ForEach{(\code{api$_i$}~$\in$~API)}{
+\nllabel{line:codepats-start}
+  \cp{\code{api$_i$}} := $\emptyset$\;
+  \ForEach{(function \code{f} reachable from \code{api$_i$})} {
+    \cp{\code{api$_i$}} := \cp{\code{api$_i$}} $\cup$ Summary(\code{f})\;
+    \nllabel{line:codepats-end}
+  }
+}
+%
+\Return \cp{\code{api$_1$}}, $\ldots$, \cp{\code{api$_n$}}
+\mycaption{Static analysis algorithm to extract resource
+manipulations.}{\label{algorithm:staticanalysis}}
+\end{algorithm}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%------------------------------------------------------------------------------
+\subsection{Background on concept analysis}
+%
+Concept analysis is a well-known hierarchical clustering technique that has
+found use in software engineering (\eg~for aspect
+mining~\cite{cmm+05,eks03,tc04,tm04}, to identify modular structure in legacy
+code~\cite{ls97,s98,st98,vk99}, to automatically convert non-object-oriented
+programs into object oriented ones~\cite{s98}, and to debug automatically mined
+temporal specifications~\cite{amb+03}).  We give a brief overview of concept
+analysis and describe how we adapt it to find building blocks.
+
+The inputs to concept analysis are (i)~a set of \textit{instances} $I$, (ii)~a
+set of \textit{features} $F$, and (iii)~a binary relation $R:~I~\rightarrow~F$
+that associates instances with features. It produces a \textit{concept lattice}
+as output.  Intuitively, each node in the concept lattice pairs a set of
+instances $X$ with a set of features $Y$, such that $Y$ is the largest set of
+features in common to \textit{all of the instances} in $X$.  Formally, each
+node is a pair \pair{$X$}{$Y$}, where $X \in I$ and $Y \in F$, such that
+$\alpha$($X$)=$Y$ and $\gamma$($Y$)=$X$, where $\alpha$($X$) = \{$f \in
+F|\forall x\in X$ ($x$, $f$) $\in R$\}, and $\gamma$($Y$) = \{$i \in I|\forall
+y\in Y$ ($i$, $y$) $\in R$\}.  A node \pair{$X$}{$Y$} appears as an ancestor of
+a node \pair{$P$}{$Q$} in the concept lattice if $P \subset X$.  In fact, this
+ordering also implies $Y \subset Q$. This is because a smaller set of instances
+will share a larger set of features in common. Thus, the root node shows the
+set of features common to all instances in $I$, while the leaf node shows the
+set of instances that share all features in $F$.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{figure}[ht!]
+\begin{center}
+\begin{tabular}{|c c|}
+\hline
+%
+\multicolumn{2}{|c|}{\textbf{(a) The relation \textit{CodePats}}}\\
+%
+\multicolumn{2}{|c|}{
+\begin{tabular}{|c|c|c|c|c|}
+\hline
+\textit{CodePats} & \textit{pat$_1$} & \textit{pat$_2$} & \textit{pat$_3$} & 
+\textit{pat$_4$}\\\hline
+\code{api$_1$} & \y & \y &    &   \\\hline 
+\code{api$_2$} & \y & \y & \y &   \\\hline
+\code{api$_3$} & \y &    & \y & \y\\\hline
+\code{api$_4$} &    &    &    & \y\\\hline
+\end{tabular}}\\
+%
+\textbf{(b) Concept lattice} &
+\textbf{(c) Nodes in the concept lattice}\\
+%
+\begin{minipage}{2in}
+\begin{center}
+\ifpdf
+\includegraphics[keepaspectratio=true,scale=0.9]{figures/pdf/concept-lattice-eg.pdf}
+\else
+\includegraphics[keepaspectratio=true,scale=0.9]{figures/eps/concept-lattice-eg.eps}
+\fi
+\end{center}
+\end{minipage} &
+\begin{minipage}{3in}
+\begin{tabular}{c l}
+\textbf{A :} & \pair{\{\code{api$_1$}, \code{api$_2$}, \code{api$_3$}, \code{api$_4$}\}}
+                    {$\emptyset$}\\ 
+\textbf{B :} & \pair{\{\code{api$_1$}, \code{api$_2$}, \code{api$_3$}\}}
+                    {\{\textit{pat$_1$}\}}\\
+\textbf{C :} & \pair{\{\code{api$_3$}, \code{api$_4$}\}}
+                    {\{\textit{pat$_4$}\}}\\
+\textbf{D :} & \pair{\{\code{api$_2$}, \code{api$_3$}\}}
+                    {\{\textit{pat$_1$},\textit{pat$_3$}\}}\\
+\textbf{E :} & \pair{\{\code{api$_1$}, \code{api$_2$}\}}
+                    {\{\textit{pat$_1$}, \textit{pat$_2$}\}}\\
+\textbf{F :} & \pair{\{\code{api$_3$}\}}
+                    {\{\textit{pat$_1$}, \textit{pat$_3$}, \textit{pat$_4$}\}}\\
+\textbf{G :} & \pair{$\emptyset$}
+                    {\{\textit{pat$_1$}, \textit{pat$_2$}, \textit{pat$_3$}, \textit{pat$_4$}\}}
+\end{tabular}
+\end{minipage}\\\hline
+\end{tabular}
+\end{center}
+\mycaption{Concept analysis example.}{\label{figure:concept-eg}}
+\end{figure}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\figref{figure:concept-eg} shows an example of a concept lattice, as applied to
+our problem. Each API function \code{api$_1$}, \code{api$_2$}, \code{api$_3$}
+and \code{api$_4$} is considered an instance, and each code pattern
+\textit{pat$_1$}, \textit{pat$_2$}, \textit{pat$_3$}, \textit{pat$_4$} is
+considered a feature. They are related by \textit{CodePats}, which is obtained
+from static analysis, depicted in \figref{figure:concept-eg}(a) as a table.
+Each node \pair{$X$}{$Y$} is such that \textit{all} the code patterns in $Y$
+appears in each \cp{\code{api$_i$}} for \code{api$_i$}$\in$$X$. This lattice
+shows, for example, that (i)~there are no code patterns in common to all API
+functions (node~\textsf{A} in the lattice), (ii)~Both \textit{pat$_1$} and
+\textit{pat$_3$} appear in both \cp{\code{api$_2$}} and \cp{\code{api$_3$}},
+and these are the only such API functions (node~\textsf{D}), and that (iii)~No
+API functions have all code patterns (node~\textsf{G}).
+
+%------------------------------------------------------------------------------
+\subsection{Using concept analysis}
+%
+We compute building blocks using \aref{algorithm:candfing}. It first
+invokes concept analysis (line~\ref{line:call-ca}) on the set of API functions
+and the set of code patterns to obtain a concept lattice as shown in
+\figref{figure:concept-eg}. It then finds building blocks, in
+lines~\ref{line:cfp-begin}-\ref{line:cfp-end}, by finding nodes in the lattice
+where new code patterns are introduced. Each such node is marked, and the set
+of new code patterns introduced in that node is considered as a building block.
+
+For the example in \figref{figure:concept-eg}, the nodes \textsf{B},
+\textsf{C}, \textsf{D}, and \textsf{E} are marked because these nodes introduce
+the code patterns \textit{pat$_1$}, \textit{pat$_4$}, \textit{pat$_3$} and
+\textit{pat$_2$}---\ie~any node containing one of these patterns \textit{must}
+have the corresponding node as an ancestor. Each of these code patterns is
+classified as a building block. 
+
+Intuitively, \aref{algorithm:candfing} works because each building block $BB$
+satisfies $BB$~$\subseteq$~\cp{\code{api$_i$}} or
+$BB$~$\cap$~\cp{\code{api$_i$}}~=~$\emptyset$, for each API function
+\code{api$_i$}. Concept analysis ensures that the node of the concept lattice
+in which a new code pattern \textit{pat$_i$}~$\in$~$BB$ is introduced will
+introduce \textit{all} of the code patterns in $BB$. Line~\ref{line:cfp-end}
+identifies and marks nodes where a new code pattern \textit{pat} is introduced
+into the lattice.  Because of the property above, all the code patterns that
+appear in the same building block as \textit{pat} appear in that node. Note
+however, that code patterns in each building block may not satisfy
+Property~\ref{chapter:static:property:fingerprint} (because static analysis was
+flow-insensitive). Thus the building blocks computed by
+\aref{algorithm:candfing} must be refined (in Step~B).
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\restylealgo{boxed}\linesnumbered
+\begin{algorithm}[ht!]
+%
+\SetVline
+\KwName{\algoname{Find\_Building\_Blocks}{(\textit{CodePats}, API)}}
+%
+\KwIn{
+(i)~\textit{CodePats}: The relation obtained from
+\aref{algorithm:staticanalysis}, and\\ 
+(ii)~API= \{\code{api$_1$}, $\ldots$, \code{api$_n$}\}, set of API functions of
+the server.}
+%
+\KwOut{$CFP_1$, $\ldots$, $CFP_k$, a set of building blocks.}
+%
+Run concept analysis with the set of instances $I$=API, 
+the set of features $F$=$\displaystyle\bigcup_{i\in[1..n]}$\cp{\code{api$_i$}}, 
+and the relation $R$=\textit{CodePats}\;
+\nllabel{line:call-ca}
+%
+$count$ := $1$\;
+\nllabel{line:cfp-begin}
+%
+\ForEach{(node \pair{$X$}{$Y$} in the concept lattice)}{
+  Let \{\pair{$X_j$}{$Y_j$}\} be the set of parents of \pair{$X$}{$Y$} in the
+  concept lattice\;
+  Diff := $Y$ - $\displaystyle\bigcup_{j}$$Y_j$\;
+  \If{(Diff $\neq$ $\emptyset$)} {
+    $CFP_{count}$ := Diff\;  
+    $count$ := $count$ + $1$\;
+    Mark the node \pair{$X$}{$Y$}\;
+\nllabel{line:cfp-end}
+%
+  }
+}
+%
+\Return $CFP_1$, $\ldots$, $CFP_{count}$ \texttt{/*} Note: $k$ is the value 
+of $count$ in this line. \texttt{*/}
+\nllabel{line:fcf-count}
+\mycaption{Algorithm for finding building blocks.}
+{\label{algorithm:candfing}}
+\end{algorithm}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+The number of building blocks identified by \aref{algorithm:candfing}
+has an upper bound of $|\cup_{i\in[1..n]}\cp{\code{api$_i$}}|$.  Note that
+while the concept lattice can be exponentially large in the number of API
+functions (because asymptotically, it is a lattice on the power set of API
+functions), this upper bound places a restriction on the number of nodes that
+will be marked in line~\ref{line:cfp-end} of \aref{algorithm:candfing}. This is
+key, because these nodes introduce building blocks, and as discussed in
+\sectref{chapter:static:overview}, they must be manually examined for
+refinement in Step~B.
+
+Several algorithms have been proposed in the literature to compute concept
+lattices. We chose to implement the incremental algorithm by Godin
+\etal~\cite[Algorithm~1]{gma95} because it has been shown to work well in
+practice~\cite{amb+03}.  While this algorithm is asymptotically
+exponential---its complexity is \textit{O}($2^{2p}|I|$), where $p$ is an upper
+bound on the number of features of any instance in $I$---the algorithm scaled
+well in our case studies.
+
+%------------------------------------------------------------------------------
+\section{Refinement with constraints}
+\label{section:constraints}
+
+As described in \sectref{chapter:static:overview:stepa}, building blocks
+obtained from concept analysis are imprecise for two reasons. First, because of
+flow-insensitivity, a pair of code patterns \textit{pat$_1$} and
+\textit{pat$_2$} that do not satisfy
+Property~\ref{chapter:static:property:fingerprint} may appear in the
+same building block. Second, the resource manipulations in a building block may
+be associated with multiple, possibly unrelated resource instances. Thus,
+building blocks must be refined using precision constraints. Domain-specific
+constraints can additionally be applied to refine constraints with
+domain-specific requirements.  
+
+This section presents a unified framework to express constraints and refine
+building blocks (Step~B). Both precision constraints and domain-specific
+constraints can be expressed in this framework.
+
+As \figref{figure:constraint-grammar} shows, each constraint is either a
+\textit{Separate}($X$,~$Y$), an \textit{Ignore}($X$) or a
+\textit{Combine}($X$,~$Y$), where $X$ and $Y$ are sets of code patterns.
+\textit{Separate}($X$,~$Y$) refines building blocks by separating code pattern
+sets $X$ and $Y$ into separate fingerprints. \textit{Ignore}($X$) refines
+building blocks by discarding the code pattern set $X$ from building blocks.
+\textit{Combine}($X$,~$Y$), for which we have only felt occasional need,
+combines code pattern sets $X$ and $Y$ in two building blocks into a single
+fingerprint, thus coarsening the results of concept analysis. For example, the
+constraint \textit{Separate}(\{$1$, $2$, $3$, $4$\},~\{$5$, $6$\}) refines the
+building block in \figref{figure:candfprmdir} to yield the fingerprints
+in \figref{figure:refined-fingerprints}. We now discuss precision and
+domain-specific constraints in this framework.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{figure}[ht!]
+\begin{center}
+\begin{tabular}{|r c l|}
+\hline
+\bnfnterm{Constraint}     
+  & ::== & 
+  \textit{Separate}~(\bnfnterm{PatSet}, \bnfnterm{PatSet})\\
+%
+  & & $|$ \textit{Combine}~(\bnfnterm{PatSet}, \bnfnterm{PatSet})\\
+%
+  & & $|$ \textit{Ignore}~(\bnfnterm{PatSet})\\
+%
+\bnfnterm{PatSet} 
+  & ::== & 
+  Set of code patterns (see \bnfnterm{Code-Pattern} in
+  \figref{figure:fingerprint-definition})\\\hline
+\end{tabular}
+\mycaption{BNF grammar for constraints.}
+{\label{figure:constraint-grammar}}
+\end{center}
+\end{figure}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+Precision constraints are \textit{Separate}($X$,~$Y$) constraints and as
+discussed in \sectref{chapter:static:overview}, they serve two goals. The first goal
+is to refine building blocks based upon resource instances manipulated.
+\textit{Separate}(\{$1$, $2$, $3$, $4$\},~\{$5$, $6$\}), the use of which was
+illustrated earlier, serves this goal. Formally, each set of code patterns can
+be associated with one or more resource instances that it manipulates. We use a
+constraint \textit{Separate($X$,~$Y$)} to separate code pattern sets $X$ and
+$Y$ that manipulate different sets of resource instances. For example, consider
+the code patterns $(1)$-$(4)$ in \figref{figure:candfprmdir}, that appear in
+the function \code{ext2\_delete\_entry}, and the code patterns $(5)$ and $(6)$,
+that appear in the function \code{ext2\_find\_entry}. Because of the way these
+functions are invoked in \code{ext2\_rename} (see
+\figref{figure:precision-constraints-eg}), code patterns $(5)$ and $(6)$ are
+associated with the resource instances \code{old\_dir}, \code{old\_dentry},
+\code{new\_dir} and \code{new\_dentry}, while code patterns $(1)$-$(4)$ are
+associated with resource instances \code{old\_dir} and \code{old\_dentry}.
+Because the code patterns $(5)$ and $(6)$ are applied to additional resource
+instances, they are separated out using the constraint above. We currently
+manually identify resource instances associated with a set of code patterns.
+However, this can potentially be automated using a program analysis that is
+sensitive to resource instances manipulated.
+
+The second goal of precision constraints is to identify and remove imprecision
+introduced because of flow-insensitive program analysis. In particular, a pair
+of code patterns \textit{pat$_1$} and \textit{pat$_2$} may appear together in a
+building block, but may not appear together in all executions of the
+server. In such cases, a \textit{Separate}(\textit{pat$_1$}, \textit{pat$_2$})
+constraint separates these code patterns into different fingerprints. For
+example, one of the building blocks that we obtained in the analysis of
+\ext\ is shown below; it appeared in \cp{\code{ext2\_ioctl}}.
+
+\begin{center}
+\begin{tabular}{|r l|}
+\hline
+{$(1)$} & \textit{Write}~\unk~\textit{To}~\code{inode->i\_flags}\\
+{$(2)$} & \textit{Write}~\unk~\textit{To}~\code{inode->i\_generation}\\\hline
+\end{tabular}
+\end{center}
+
+However, \code{ext2\_ioctl} either performs the resource manipulation
+corresponding to code pattern~(1) or~(2), but not both, in each execution,
+based upon the value of a flag that it is invoked with. Thus, a constraint
+\textit{Separate}(\{\textit{1}\}, \{\textit{2}\}) is used to refine the
+building block above.
+
+Note that precision constraints are not necessary if more precise program
+analysis is employed. \aref{algorithm:staticanalysis} currently lacks
+flow-sensitivity and data-flow information that can potentially avoid the
+imprecision reported above. However, in each of our case studies we needed
+precision constraints for no more than $50\%$ of the building blocks
+mined---$9$/$18$ for \ext, $24$/$115$ for \xserver, and $4$/$38$ for PennMUSH.
+Thus, we believe that our current technique strikes a good balance between
+simplicity and precision of building blocks.  
+
+Domain-specific constraints encode domain knowledge to further refine building
+blocks. A domain specific constraint that we have found useful is
+\textit{Ignore}(\textit{Pat}), using which we can eliminate certain code
+patterns that we deem irrelevant for security.  For example, in the \xserver,
+which is an event-based server, each request from an \xclient\ is converted
+into a one or more events that are processed by the server. It may only be
+necessary to enforce an authorization policy governing the set of events that
+an \xclient\ can request on a resource.  In such cases, all code patterns
+except those related to event-processing can be filtered out from fingerprints
+using \textit{Ignore} constraints.
+
+The use of \textit{Combine} constraints is relatively infrequent, and may be
+used if the building blocks mined by concept analysis are at too fine a
+granularity. For example, in PennMUSH, we found that $30$ of the $38$ building
+blocks contained only one code pattern. An administrator may wish to write
+authorization policies at a higher level of granularity---where the fingerprint
+of each security-sensitive operation contains multiple code patterns.
+\textit{Combine} constraints can be used to group together code patterns to get
+such fingerprints. 
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{table}[ht!]
+\begin{center}
+\begin{tabular}{|c|c|c|c|c|c|c|rl|}
+\hline
+& & \textbf{Analysis} & \multicolumn{2}{c|}{\textbf{Concept lattice}} & 
+& & \multicolumn{2}{c|}{\textbf{Refinement}}\\\cline{4-5}
+\textbf{Benchmark} & \textbf{LOC} & \textbf{time (secs)} & \textbf{\# Nodes} &
+\textbf{\# Edges} & \textbf{Number} & \textbf{Size} &
+\multicolumn{2}{c|}{\textbf{needed for}}\\\hline
+\ext\                 &  $4,476$ &   $2.1$ &  $21$ & $32$ & $18$ & $3.67$ &  $9$ &  ($50\%$)\\
+\xserver/\texttt{dix} & $30,096$ & $58.1$ & $329$ & $978$ & $115$ & $3.76$ & $24$ & ($20.87\%$)\\
+PennMUSH              & $94,014$ & $318.9$ & $127$ & $301$ & $38$ & $1.42$ &  $4$ & ($10.53$\%)\\\hline
+\end{tabular}
+\end{center}
+%
+\mycaption{Results for each of our case studies. The sixth column denotes the
+number of building blocks mined, while the seventh column shows their
+average size, in terms of the number of code patterns per building 
+block. The table also shows the number of building blocks that
+had to be refined with precision constraints.
+\figref{figure:conceptlattice:ext2}, \figref{figure:conceptlattice:xserver} and
+\figref{figure:conceptlattice:pennmush} depict the concept lattices produced
+for each of these case studies.}{\label{table:static-results}}
+%
+\end{table}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%------------------------------------------------------------------------------
+\section{Evaluation of the static fingerprint mining algorithm}
+\label{chapter:static:section:results}
+
+We conducted case studies on three complex systems, each of which has been in
+development for several years. We used (i)~the \ext\ file system from Linux
+kernel distribution $2.4.21$, (ii)~a subset of the \xserver\ (X$11$R$6.8$), and
+(iii)~PennMUSH, an online game server ($v1.8.1p9$). 
+
+We evaluated our technique using four criteria. 
+
+\begin{itemize}
+%
+\item First, we measured the number and average size of building blocks
+extracted from source code. Because an analyst must examine these building
+blocks to identify security-sensitive operations, these metrics indicate
+the amount of manual effort needed to supplement our technique. Note that
+without our technique, the analyst must examine the \textit{entire} code base
+to find security-sensitive operations. 
+%
+\item Second, we measured the number of building blocks that had to be
+refined with constraints. This metric shows the effect of imprecise static
+analysis and the effort needed to refine building blocks. 
+%
+\item Third, we evaluated the quality of fingerprints by manually interpreting
+the operation embodied by each fingerprint. 
+%
+\item Last, for \ext\ and the \xserver, we correlated the fingerprints
+extracted by our technique with security-sensitive operations that were
+identified independently for these servers~\cite{ksv03,wcs+02}.  
+%
+\end{itemize}
+
+\tabref{table:static-results} presents statistics on the time taken by the
+analysis and the size of concept lattices produced. It also shows the number
+and size of building blocks and the number of building blocks
+that needed refinement. As these results show, our analysis is effective at
+distilling several thousand lines of code into concept lattices of manageable
+size. None of our benchmarks had more than $115$ building blocks. These
+building blocks were, on average, smaller than $4$ code patterns, and
+fewer than $50\%$ of these had to be refined manually.  Identifying
+security-sensitive operations reduces to refining and interpreting these
+building blocks, instead of having to analyze several thousand lines of
+code, thus drastically cutting the manual effort required. In our case studies,
+this required a few hours, with modest domain knowledge. As
+\tabref{table:static-results} also shows, our analysis is efficient in
+practice, completing in just over $310$ seconds even for PennMUSH, our largest
+benchmark (on a $1$GHz AMD Athlon processor with $1$GB RAM).
+Sections~\ref{subsection:results:ext2}-\ref{subsection:results:pennmush}
+present each case study in detail, including our experience interpreting
+fingerprints and correlating these fingerprints against independently
+identified security-sensitive operations.
+
+
+%------------------------------------------------------------------------------
+\subsection{The \ext\ file system}
+\label{subsection:results:ext2}
+
+\begin{figure}[ht!]
+\begin{center}
+\ifpdf
+\centerline{\includegraphics[keepaspectratio=true,height=4.0in]{figures/pdf/ext2-hasse.pdf}}
+\else
+\centerline{\includegraphics[keepaspectratio=true,height=4.0in]{figures/eps/ext2-hasse.eps}}
+\fi
+\end{center} 
+\mycaption{Concept lattice for \ext. The shaded nodes represent those marked by
+\aref{algorithm:candfing}, and the concepts represented by these node contain
+building blocks. This concept lattice has 21 nodes and 32 edges.
+\aref{algorithm:candfing} identified 18 building blocks.}{\label{figure:conceptlattice:ext2}}
+\end{figure}
+
+As discussed in \sectref{chapter:static:overview}, we focused on how
+directories are manipulated by the \ext~file system. Concept analysis produced
+the concept lattice shown in \figref{figure:conceptlattice:ext2}. The shaded
+nodes in this lattice depict $18$ building blocks containing an average
+of $3.67$ code patterns, of which we had to refine $9$ with precision
+constraints to obtain a total of $44$ fingerprints.  We then determined the
+resource manipulation embodied by each fingerprint and tried to associate it
+with a security-sensitive operation.  \sectref{chapter:static:overview}
+presented two such examples. Two more examples are discussed below.
+
+% NOTE: The number (44, above) of fingerprints was obtained by a conservative
+% estimate. Most of these fingerprints were because I split the candidate
+% fingerprints obtained from concept analysis into single fingerprints whenever
+% I wasn't sure that the code patterns would be executed together.
+
+\begin{enumerate}
+%
+\item The fingerprint \{\textit{Write} \code{0} \textit{To}
+\code{inode->i\_blocks}, \textit{Write} \code{4096} \textit{To}
+\code{inode->i\_blksize}, \textit{Write} \code{1} \textit{To}
+\code{inode->u->ext2\_inode\_info->i\_new\_inode}\} appears in
+\cp{\code{ext2\_create}}, \cp{\code{ext2\_mkdir}}, \cp{\code{ext2\_mknod}} and
+\cp{\code{ext2\_symlink}}.  The code patterns in this fingerprint were all
+extracted from the function called \code{ext2\_new\_inode} and embody creation
+and initialization of a new \code{inode}. 
+%
+\item The fingerprint \{\textit{Write} \code{0} \textit{To}
+\code{inode->i\_size}\} appears in \cp{\code{ext2\_rmdir}}. This code pattern
+embodies a key step in directory removal. 
+%
+\end{enumerate}
+
+% Namely: Add_name, Remove_name, Reparent, Read, Write, Rmdir, Search, Create,
+% Link, Unlink and Rename.
+
+The LSM project has identified a set of $11$ operations on directories. These
+operations are used to write \selinux\ policies governing how processes can
+manipulate directories. We were able to identify at least one fingerprint for
+each of these LSM operations from the fingerprints that we mined. For example,
+the fingerprints presented in \sectref{chapter:static:overview} were for the LSM
+operations \op{Dir\_Remove\_Name} and \op{Dir\_Search}, while the examples
+above correspond to the \op{File\_Create}\footnote{Note that some LSM
+directory operations have the \op{File\_} prefix.} and \op{Dir\_Rmdir}
+operations, respectively. 
+
+
+
+%------------------------------------------------------------------------------
+\subsection{The X11 server}
+\label{subsection:results:xserver}
+
+\begin{figure}[ht!]
+\begin{center}
+\ifpdf
+\centerline{\includegraphics[keepaspectratio=true,height=4.0in]{figures/pdf/x11-hasse.pdf}}
+\else
+\centerline{\includegraphics[keepaspectratio=true,height=4.0in]{figures/eps/x11-hasse.eps}}
+\fi
+\end{center} 
+\mycaption{Concept lattice for the \xserver. This concept lattice has 329 nodes
+and 978 edges. \aref{algorithm:candfing} identified  115 building blocks
+in this concept lattice.}{\label{figure:conceptlattice:xserver}}
+\end{figure}
+
+The \xserver\ is a popular window-management server. \xclients\ can connect to
+the \xserver, which manages resources such as windows and fonts on behalf of
+these \xclients. The \xserver\ has historically lacked mechanisms to isolate
+\xclients\ from each other, and has been the subject of several attacks.  Such
+attacks can be prevented with an authorization policy enforcement, which
+determines the set of security-sensitive operations that an \xclient\ can
+perform on a resource. Indeed, there have been several efforts to secure the
+\xserver~\cite{bpw+90,emo+93,ksv03}.
+
+We focused on a subset of the \xserver, its main dispatch loop (called
+\code{dix}) that contains code to accept client requests and translate them to
+lower layers of the server. We focused on this subset because it contains the
+bulk of code that processes client windows, represented by the \code{Window}
+data structure, the resource on which we wanted to identify security-sensitive
+operations. In addition to \code{Window}, we also included the \code{xEvent}
+data structure, because the \xserver\ uses it extensively to process client
+requests. The API that we used contains $274$ functions that the \xserver\
+exposes to clients.
+
+Concept analysis produced $115$ building blocks with $3.76$ code
+patterns, on average, of which $24$ had to be refined with precision
+constraints. The interpretation of two of these fingerprints is discussed
+below.  
+
+\begin{enumerate}
+%
+% NOTE: Only displaying part of the fingerprint, for brevity.
+\item 
+\{\textit{Write} \unk\ \textit{To} \code{xEvent->u->mapRequest->window},
+\textit{Write} \code{20} \textit{To} \code{xEvent->u->type}\} is a 
+fingerprint contained in \textit{CodePats} of $5$ API functions, embodies an
+\xclient\ request to map a \code{Window} on the screen, and potentially
+represents a security-sensitive operation.
+%
+\item The fingerprint \{\textit{Write} \code{0} \textit{To}
+\code{Window->mapped}, \textit{Write} \code{18} \textit{To}
+\code{xEvent->u->type}\}, contained in \textit{CodePats} of $7$ API functions
+embodies unmapping a visible \xclient\ window from the screen, also a potential
+security-sensitive operation.  
+%
+\end{enumerate}
+
+There have been efforts to secure the \xserver\ in the context of the
+X11/\selinux\ project, which identified $22$ operations on the \code{Window}
+resource. As with \ext, we were able to identify at least one fingerprint for
+each of these security-sensitive operations from those that we mined.  For
+instance, the fingerprints presented above correspond to the \op{Window\_Map}
+and \op{Window\_Unmap} operations on a \code{Window}, respectively.
+
+The fingerprint mining technique presented in \chapref{chapter:dynamic}
+identified fingerprints for $11$ security-sensitive operations on the
+\code{Window} resource. However, because that technique is based upon dynamic
+program analysis, it can only identify fingerprints along paths exercised by
+manually-chosen test inputs to the \xserver.  Further, that technique, as
+implemented in \aid, could automate fingerprint-finding only up to the
+granularity of function calls; these were then manually refined to the
+granularity of code patterns. Concept analysis not only identified the
+fingerprints mined by \aid\ at the granularity of code patterns, but did so
+automatically.  
+
+%------------------------------------------------------------------------------
+\subsection{The PennMUSH server}
+\label{subsection:results:pennmush}
+
+PennMUSH is an open-source online game server. Clients connecting to a PennMUSH
+server assume the role of a virtual character, as in other popular
+massively-multiplayer online roleplaying games. For this work, it suffices to
+think of PennMUSH as a collaborative database of objects that clients can
+modify. Objects are shared resources, and an authorization policy must govern
+the set of security-sensitive operations that a client can perform on each
+object.
+
+\begin{figure}[ht!]
+\begin{center}
+\ifpdf
+\centerline{\includegraphics[keepaspectratio=true,height=4.0in]{figures/pdf/pennmush-hasse.pdf}}
+\else
+\centerline{\includegraphics[keepaspectratio=true,height=4.0in]{figures/eps/pennmush-hasse.eps}}
+\fi
+\end{center} 
+\mycaption{Concept lattice for PennMUSH. This concept lattice has 127 nodes
+and 310 edges. \aref{algorithm:candfing} identified 38 building blocks
+in this concept lattice.}{\label{figure:conceptlattice:pennmush}}
+\end{figure}
+
+Clients interact with PennMUSH by entering commands to a text server, which
+activates one or more of $603$ internal functions, which we used as the API of
+PennMUSH. Most of these API functions modify a database of objects. Thus, we
+tracked how the PennMUSH API manipulates resources of type \texttt{object}.
+Concept analysis produced $38$ building blocks. Most of them had only
+one or two code patterns, so we only had to refine $4$ of these building
+blocks using precision constraints.  Two of these fingerprints are
+discussed below.
+
+% to obtain a total of $43$ fingerprints. 
+
+\begin{enumerate}
+%
+\item The fingerprint \textit{Write}~\unk\ \textit{To} \code{object->name}
+potentially modifies an object name, and was contained in \textit{CodePats} of
+$16$ API functions, representing creation, destruction and modification of
+objects. Unauthorized clients must be disallowed from changing the name of an
+\texttt{object}, indicating that this is a fingerprint of a security-sensitive
+operation. 
+%
+\item The fingerprint \{\textit{Write} \code{8} \textit{To}
+\code{object->type}, \textit{Write} \code{0} \textit{To}
+\code{object->modification\_time}, \textit{Write} \code{1118743} \textit{To}
+\code{object->warnings}\} appears in \cp{\code{cmd\_pcreate}} and
+\cp{\code{fun\_pcreate}}, both of which are API functions associated with
+creation of a ``character'' object. 
+
+Here, the number \code{1118743} represents a flag that signifies that a
+character should be warned about problems with the \code{object}s that they
+own, and the number \code{8} written to the field \code{type} indicates that
+the newly created object is a character.  These code patterns represent
+necessary steps in character creation in PennMUSH, and thus indicate that this
+is fingerprint of a security-sensitive operation.
+
+\end{enumerate}
+
+In PennMUSH, the \code{object} data structure has just $18$ fields, while the
+API contains $603$ functions. Each security-sensitive operation is performed at
+the granularity of accesses to just one or two of the fields of \code{object}.
+This explains the smaller number and size of building blocks extracted
+by concept analysis (as compared to \xserver). 
+
+While the security-sensitive operations that we extracted for PennMUSH can
+definitely form the basis for writing policies, site-specific policies may be
+created by combining several security-sensitive operations. For example, an
+administrator might decide that reading an object's name is as
+security-sensitive as determining the kind of object.  He can then use the
+domain-specific constraint \textit{Combine}(\textit{Read}
+\code{object->name}, \textit{Read} \code{object->type}) to combine these code
+patterns together into a single fingerprint that embodies this
+security-sensitive operation.
+
+%------------------------------------------------------------------------------
+\section{Limitations}
+\label{chapter:static:section:limitations}
+
+An important limitation of the technique presented in this chapter is that it
+cannot guarantee that all fingerprints have been mined. In particular, it is
+\textit{incomplete} for unsafe languages such as C, and can thus have
+\textit{false negatives}, \ie~it can fail to identify a security-sensitive
+operation, as a result of which insufficient authorization checks will be
+placed in the retrofitted server. 
+
+Two reasons contribute to this limitation, both of which are artifacts of
+an unsafe language such as C:
+
+\begin{enumerate}
+
+\item \textbf{Pointer arithmetic} can be used to read from/write to a C
+\code{struct} representing a resource data structure. Because code patterns in
+fingerprints are expressed as ASTs denoting \textit{Read}, \textit{Write} and
+\textit{Call} operations on structure fields, our static analysis tool can
+potentially miss accesses to fields, thus resulting in spurious fingerprints,
+or can completely miss fingerprints.
+
+\item \textbf{Direct writes} to data structures are possible via functions such
+as \code{memcpy}, which write to untyped regions of memory. Thus, a
+\code{memcpy} can be used to write to the field of a data structure, and this
+write will be missed by the static analysis presented in this chapter.
+
+\end{enumerate}
+
+Further research is necessary to develop a provably complete approach to
+mine fingerprints for servers written in unsafe languages. However, we
+conjecture that the technique presented in this chapter is complete (\ie~will
+not miss fingerprints) for servers written in safe languages, such as Java.
+
+
+%------------------------------------------------------------------------------
+\section{Static fingerprint mining versus dynamic fingerprint mining}
+\label{chapter:static:section:comparison}
+
+As discussed earlier and demonstrated in our case studies, the static
+fingerprint mining technique has both better coverage than dynamic mining, and
+mines fingerprints without the need for an \apriori\ description of
+security-sensitive operations. 
+
+While this may seem to suggest that the static fingerprint mining technique
+subsumes the dynamic fingerprint mining technique, the dynamic technique can
+potentially be used to improve the results of static fingerprint mining.
+Static analysis mines building blocks, which are manually examined to identify
+security-sensitive operations. A description of these security-sensitive
+operations can then be used as input to the dynamic fingerprint mining
+technique. The fingerprints so obtained can then be compared against the
+fingerprints obtained from the static technique. This comparison can
+potentially be used to prune out false positives produced by the static
+fingerprint mining technique. In future work, we plan to explore this
+application of dynamic fingerprint mining to benefit static fingerprint mining.
+
+
+%------------------------------------------------------------------------------
+\section{Using the static fingerprint mining tool}
+\label{chapter:static:usage}
+
+This section summarizes the steps that a security analyst must follow to
+find fingerprints and security-sensitive operations using the static mining
+tool.
+
+\begin{itemize}
+
+\item Specify the API to the server and the data types used by the server to
+represent resources that must be protected.
+
+\item Run the tool to obtain building blocks.
+
+\item Refine building blocks using constraints. Precision constraints refine
+building blocks by accounting for imprecision introduced by flow-insensitive
+program analysis, while domain-specific constraints further refine building
+blocks using domain knowledge.
+
+\item Manually examine building blocks, and interpret the security-sensitive
+operation performed by the resource accesses contained in the building block.
+Building blocks may potentially have to be combined during this process. 
+
+\item Output security-sensitive operations. The building block (or combination
+of building blocks) of each security-sensitive operation is output as the
+fingerprint of that security-sensitive operation.
+
+\end{itemize}
+
+
+%------------------------------------------------------------------------------
+\section{Summary of key ideas}
+\label{chapter:static:keyideas}
+
+To summarize, the key contributions of this chapter are:
+
+\begin{itemize}
+%
+\item A fully static technique to mine fingerprints of security-sensitive
+operations. 
+
+The use of static analysis overcomes an important limitation of the
+dynamic analysis-based technique presented in \chapref{chapter:dynamic}, namely
+the ability to find fingerprints only along paths exercised by manually chosen
+inputs to the server. Because static program analysis ensures better coverage
+than dynamic analysis, the static technique can mine more fingerprints than the
+dynamic technique.
+%
+\item A novel algorithm using concept analysis to automatically mine
+fingerprints of security-sensitive operations.  
+
+To our knowledge, this is the first application of concept analysis to mine
+security properties of software.  The use of concept analysis overcomes another
+limitation of the technique in \chapref{chapter:dynamic}, namely the need for
+an \apriori\ description of security-sensitive operations.  Concept analysis
+automatically mines building blocks without the need for an \apriori\
+description of security-sensitive operations. We were thus able to apply this
+technique to find security-sensitive operations for PennMUSH, for which no
+\apriori\ description of security-sensitive operations was available.
+%
+\item Case studies on three real-world servers of significant complexity.  
+
+In each case study, we were able to inspect the lattice and identify
+security-sensitive operations with a few hours of manual effort and modest
+domain knowledge.  Without our approach, the entire code base must be examined
+to find such security-sensitive operations. 
+%
+\end{itemize}
+
+

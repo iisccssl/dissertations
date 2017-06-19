@@ -1,0 +1,167 @@
+\documentclass[12pt]{withesis}
+
+%------------------------------------------------------------------------------
+%                                  Preamble. 
+%------------------------------------------------------------------------------
+\usepackage[usenames]{color}
+\usepackage{epsfig}
+\usepackage{times}
+\usepackage{pifont}
+\usepackage{txfonts}
+\usepackage{graphics} % Needed for the listings package.
+\usepackage{graphicx}
+\usepackage{keyval}
+\usepackage{styles/ifpdf}
+\usepackage{styles/algorithm2e}
+\usepackage{styles/needspace}
+\usepackage{styles/widow}
+\usepackage{listings}
+\usepackage[dvips]{changebar}
+
+% Setting up the page size and hyperrefs for PDF
+\definecolor{dblue}{rgb}{0,0.08,0.60}
+\usepackage[pdftex,
+            colorlinks=true,
+            citecolor=dblue,
+            linkcolor=dblue,
+            citebordercolor=000,
+            plainpages=false,
+            pdfpagelabels]{hyperref}
+\pdfpagewidth=8.5in
+\pdfpageheight=11in
+
+% My own commands for figure and section crossrefs
+\newcommand{\mycaption}[2]{\caption{#1}#2}
+\newcommand{\figref}[1]{\autoref{#1}}
+\newcommand{\tabref}[1]{\autoref{#1}}
+\newcommand{\chapref}[1]{\autoref{#1}}
+\newcommand{\sectref}[1]{\autoref{#1}}
+\renewcommand{\chapterautorefname}{Chapter}
+\renewcommand{\sectionautorefname}{Section}
+\renewcommand{\subsectionautorefname}{Section}
+\renewcommand{\subsubsectionautorefname}{Section}
+\newcommand{\algoname}[2]{\textsc{#1}#2}
+\newcommand{\aref}[1]{Algorithm~\ref{#1}}
+\newcommand{\bnfnterm}[1]{\textsc{#1}}
+
+%------------------------------------------------------------------------------
+%                                Useful commands. 
+%------------------------------------------------------------------------------
+\newcommand{\mycomment}[1]{}
+\newcommand{\editme}[1]{\textcolor{red}{#1}}
+\renewcommand{\url}[1]{\textsf{#1}}
+
+%------------------------------------------------------------------------------
+%                        Acronymns, in alphabetical order 
+%------------------------------------------------------------------------------
+\newcommand{\adhoc}{ad hoc}
+\newcommand{\aid}{\textsc{Aid}}
+\newcommand{\apriori}{\textit{a priori}}
+\newcommand{\bx}{\parallel}
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\codesm}[1]{\texttt{\footnotesize #1}}
+\newcommand{\cp}[1]{\textit{CodePats}(#1)}
+\newcommand{\eg}{\textit{e.g.,}}
+\newcommand{\etal}{\textit{et al.}}
+\newcommand{\events}{$\Sigma$}                 % Language of events. 
+\newcommand{\ext}{ext2}
+\newcommand{\ie}{\textit{i.e.,}}
+\newcommand{\kcnf}{$k$-CNF}
+\newcommand{\kcnfse}{\textsf{\kcnf\ SET EQUATION}}
+\newcommand{\lno}[1]{\textbf{\textrm{#1}}}
+\newcommand{\myarrow}{\texttt{->}}
+\newcommand{\op}[1]{\textsf{#1}}
+\newcommand{\pair}[2]{$\langle$#1, #2$\rangle$}
+\newcommand{\policy}{$\mathcal{A}$}            % Policy
+\newcommand{\pred}[1]{\textsf{#1}}
+\newcommand{\predoppair}[2]{$\langle$\pred{#1}~$\bx$~\op{#2}$\rangle$}
+\newcommand{\quadruple}[4]{$\langle$#1, #2, #3, #4$\rangle$}
+\newcommand{\return}{$\mathcal{R}$}            % Response Function.
+\newcommand{\rot}[1]{\rotatebox{90}{\small #1}}
+\newcommand{\selinux}{SELinux}
+\newcommand{\server}{$\mathcal{X}$}            % Server.
+\newcommand{\setcov}{\textsf{MINIMUM SET COVER}}
+\newcommand{\state}{$\mathcal{S}$}             % Server's State.
+\newcommand{\subjlab}[1]{#1}
+\newcommand{\triple}[3]{$\langle$#1, #2, #3$\rangle$}
+\newcommand{\unk}{$\perp$}
+\newcommand{\update}{$\mathcal{U}$}            % State Update Function.
+\newcommand{\xclient}{X~client}
+\newcommand{\xclients}{X~clients}
+\newcommand{\xserver}{X~server}
+\newcommand{\y}{\ding{51}}
+\newcommand{\my}{\ding{53}$_{fn}$}            % False negatives.
+\newcommand{\mn}{\ding{53}$_{fp}$}            % False positives.
+
+% \newtheorem{definition}{Definition}
+\newtheorem{property}{Property}
+\newtheorem{observation}{Observation}
+\newtheorem{clm}{Claim}
+
+%------------------------------------------------------------------------------
+%                                  Prelude
+%------------------------------------------------------------------------------
+\begin{document}
+\clearpage\pagenumbering{roman} 
+\title{Retrofitting Legacy Code\\ for Authorization Policy Enforcement}
+\author{Vinod Ganapathy}
+\date{2007}
+\department{Computer Sciences}
+\maketitle
+\copyrightpage
+
+% DEDICATION
+\begin{dedication}
+\textit{In fond remembrance of my thatha Shri. V.~Lakshminarayanan,\\
+my paati Smt.~Sharada Seshan, kollu paati, and Bruno.}
+\end{dedication}
+
+% ACKNOWLEDGMENTS
+\include{chapters/prelude/ack}
+
+% CONTENTS, TABLES, FIGURES
+\tableofcontents
+\listoftables
+\listoffigures
+
+\advisorname{Somesh Jha}
+\advisortitle{Associate Professor}
+
+% UMI-ABSTRACT
+\begin{umiabstract}
+  \input{chapters/prelude/abstract}
+\end{umiabstract}
+
+% ABSTRACT
+\begin{abstract}
+  \input{chapters/prelude/abstract}
+\end{abstract}
+
+\clearpage\pagenumbering{arabic}
+
+%------------------------------------------------------------------------------
+%                                Main Contents. 
+%------------------------------------------------------------------------------
+\include{chapters/introduction/introduction}
+\include{chapters/overview/overview}
+\include{chapters/fingerprints/fingerprints}
+\include{chapters/dynamic-mining/dynamic-mining}
+\include{chapters/static-mining/static-mining}
+\include{chapters/matching/matching}
+\include{chapters/relatedwork/relatedwork}
+\include{chapters/conclusions/conclusions}
+
+%------------------------------------------------------------------------------
+%                                  References.
+%------------------------------------------------------------------------------
+\bibliographystyle{alpha}
+\bibliography{bib/references}
+
+%------------------------------------------------------------------------------
+%                                  Appendices.
+%------------------------------------------------------------------------------
+% \begin{appendices}
+% \include{chapters/appendix/k-CNF}
+% \end{appendices}
+
+\end{document}

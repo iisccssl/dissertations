@@ -1,0 +1,29 @@
+\begin{thebibliography}{1}
+
+\bibitem{goossens}
+Michel Goossens, Frank Mittelbach, and Alexander Samarin.
+\newblock {\em The \LaTeX Companion}.
+\newblock Addison--Wesley Pub.\ Co., Reading, MA, 1994.
+
+\bibitem{knuth}
+Donald~E. Knuth.
+\newblock {\em The \TeX book}.
+\newblock Addison--Wesley Pub.\ Co., Reading, MA, 1984.
+
+\bibitem{lamport}
+Leslie Lamport.
+\newblock {\em \LaTeX: A Document Preparation System}.
+\newblock Addison--Wesley Pub.\ Co., Reading, MA, 1986.
+
+\bibitem{rellich:der40}
+F.~Rellich.
+\newblock Darstellung der {E}igenwerte von {$\Delta u + \lambda u = 0$} durch
+  ein {R}andintegral.
+\newblock {\em Math Z.}, 46:635--636, 1940.
+
+\bibitem{zeidler:nfa88IIa}
+E.~Zeidler.
+\newblock {\em Nonlinear {F}unctional {A}nalysis}, volume IIa.
+\newblock Springer Verlag, New York, 1988.
+
+\end{thebibliography}

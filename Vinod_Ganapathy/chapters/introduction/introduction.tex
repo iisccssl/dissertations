@@ -1,0 +1,562 @@
+\chapter{Introduction}
+\label{chapter:introduction}
+
+% Short summary of this dissertation
+
+This dissertation presents program analysis and transformation techniques to
+retrofit legacy software with mechanisms for authorization policy enforcement.
+Using case studies with real-world software systems, it demonstrates that these
+techniques offer a principled and automated alternative to the \adhoc\ and
+manual techniques that are currently used to retrofit legacy software.
+
+
+%==============================================================================
+\section{Motivation}
+\label{chapter:introduction:motivation}
+
+% Motivation for this thesis, the need for retroactive techniques to add
+
+Design for Security, the principle that security must be a key design
+consideration in the construction of a secure system, has long been a mantra of
+the security community. Indeed, systems such as Multics~\cite{cv65} and
+Hydra~\cite{wcc+74}, which provided strong security guarantees, were
+constructed with security as a principle design consideration. 
+
+While proactively designing for security will undoubtedly create more robust
+and secure systems, doing so is often difficult in practice because of two
+reasons.
+
+First, because application functionality and performance are often more
+tangible features to a customer, software producers focus on these aspects,
+with security typically being an afterthought. Indeed, excluding the operating
+system, the number of applications that have been proactively designed for
+security is far outnumbered by applications that are not. Some examples of
+software that have proactively been designed for security include the Postfix
+mail program~\cite{postfix} and database servers~\cite{oracle,sqlserver}.
+There are thus large bodies of legacy software with inadequate or non-existent
+security mechanisms. It is impractical to require that these systems be
+redesigned and rebuilt for security. It is instead advisable to
+\textit{retrofit} security mechanisms into these systems. However, because of
+the time and cost involved, even these security retrofits are currently
+undertaken only rarely for large legacy systems.  For example, it took almost
+two years to modify the Linux kernel to add mechanisms that enforce mandatory
+access control (MAC) policies~\footnote{The Orange Book~\cite{tcsec} defines
+Mandatory access control as ``a means of restricting access to objects based on
+the sensitivity (as represented by a security label) of the information
+contained in the objects and the formal authorization (\ie~clearance) of
+subjects to access information of such sensitivity''. In contrast,
+Discretionary access control (DAC) is defined as ``a means of restricting
+access to objects based on the identity of subjects and/or groups to which they
+belong. The controls are discretionary in the sense that a subject with a
+certain access permission is capable of passing that permission (perhaps
+indirectly) on to any other subject''. Thus MAC denies users full control over
+access to resources, including those that they create. In contrast, in DAC,
+ownership of a resource allows a subject full control over access to the
+resource, including delegation of access rights to the resource.  Examples of
+MAC policies include the Bell-LaPadula policy~\cite{bl76} and the Biba
+policy~\cite{b77}, while the Graham-Denning model~\cite{gd72} is an example of
+a DAC policy. The specifics of MAC and DAC are not central to the techniques
+developed in this dissertation and will not be presented in further detail.
+For a good overview of MAC and DAC, see McLean~\cite{m90}.}.
+Similarly, the privilege-separated version of OpenSSH required a new system
+architecture, and the addition of a significant amount of new
+code~\cite{pfh03}.
+
+Second, even if a system is designed for security, additional security
+mechanisms may have to be added in the future. For example, while the Linux
+kernel has historically had mechanisms to enforce discretionary access control
+(DAC) policies, mechanisms to enforce MAC policies were added only in
+2002~\cite{wcs+02}. Moreover, prior experience shows that even if a system is
+designed for security, functional and performance enhancements that are added
+in the future may break security assumptions, thus calling for a reevaluation
+of the system's security. For example, Karger and Schell~\cite{ks74} showed
+that modifications to improve the usability of Multics broke several of its
+design assumptions, which resulted in potentially exploitable vulnerabilities.
+
+These reasons motivate the need for retroactive techniques to secure
+software---automatic and semi-automatic techniques to reason about security
+properties of legacy software, and retrofit it with security mechanisms.
+Indeed, the need for such techniques has also been realized by others. For
+example, the CCured tool~\cite{nch+05,nmw02} automatically retrofits legacy
+C~programs into a type-safe variant by inserting runtime checks that enforce
+type safety. Similarly, the Privtrans tool~\cite{bs04} semi-automatically
+refactors legacy C~programs for privilege separation using program
+partitioning.
+
+This dissertation continues this line of research into retroactive techniques
+to secure legacy software, and focuses on the problem of retrofitting legacy
+software with mechanisms for authorization policy enforcement.
+
+
+%==============================================================================
+\section{Retrofitting authorization policy enforcement mechanisms}
+\label{chapter:introduction:retrofitting}
+
+Software systems that manage shared resources must protect these resources from
+unauthorized access. This is achieved by formulating and enforcing an
+appropriate authorization policy (also called an access control policy).  This
+policy specifies the set of \textit{security-sensitive operations} that a
+\textit{subject} (typically a user of the system) can perform on an
+\textit{object} (typically a resource managed by the system).  For example,
+operating systems manage shared resources such as files, network connections
+and memory, and typically enforce policies that determine how users of the
+system can access these resources. A popular example of such a policy on
+UNIX-like systems allows only the \code{root} user to perform the operation
+\op{Write} on the \code{/etc/passwd} file (the resource).
+
+Authorization policies are typically enforced using a security mechanism called
+a \textit{Reference Monitor}. Introduced by Anderson in 1972~\cite{a72}, a
+reference monitor is an entity that satisfies three key properties.
+
+\begin{enumerate}
+
+\item \textbf{Complete mediation.} The reference monitor must be invoked at
+each access to a shared resource, \ie~all security-sensitive operations
+performed on a shared resource must be mediated. Saltzer and Schroeder also
+call this property the \textit{Principle of Complete Mediation}~\cite{ss75}.
+
+\item \textbf{Tamper resistance.} The reference monitor mechanism must
+be tamperproof, \ie~an attacker must not be able to circumvent the mechanism,
+\eg~by rewriting the code of the reference monitor, so that an access check is
+not performed (and the authorization policy not enforced) before a shared
+resource is accessed. 
+
+\item \textbf{Verifiability.} The reference monitor must be a small-enough
+entity so as to allow for thorough verification.
+
+\end{enumerate}
+
+A reference monitor thus mediates each security-sensitive operation on a shared
+resource, and ensures that a subject is allowed to perform the operation on a
+resource only if it is allowed by the authorization policy. This dissertation
+develops a suite of techniques to retrofit a reference monitor into a legacy
+software system that lacks this security mechanism. 
+
+We consider two concrete examples to motivate the need to retrofit a reference
+monitor into legacy code: (1) the integration of the Linux Security Modules
+(LSM) framework~\cite{wcs+02} to the Linux operating system, and (2) the
+integration of a reference monitor with the \xserver~\cite{xserver}.
+
+While Linux has long had the ability to enforce DAC policies, the need was felt
+to extend these mechanisms to enforce MAC policies. This was achieved using the
+Linux security modules (LSM) framework~\cite{wcs+02}, by retrofitting the Linux
+kernel. The creation of the LSM framework was motivated by the proliferation of
+different Linux patches that aimed to improve the default Linux access control
+mechanism through finer grained enforcement of MAC
+policies~\cite{argus,grsecurity,rsbac,nsa,apparmor,lids}. The LSM framework
+generalizes this work to define a reference monitor interface for mediating all
+accesses to security-sensitive operations via loadable kernel modules in a
+policy-independent way. While there were differences between these patches in
+scope, policy models, and ancillary features, a single reference monitor
+interface can be defined that subsumes all approaches since the goal of a
+reference monitor is complete mediation of all security-sensitive operations.
+The development of the LSM framework from the multitude of Linux patches
+described above was a manual process of collecting authorization decision
+points (\ie~calls to the reference monitor, or \textit{hooks}) from each patch
+and resolving inconsistencies between these choices. 
+
+The \xserver, like many other server applications, enables multiple \xclients\
+to access shared resources (\eg~windows, fonts) that it manages. However, the
+\xserver\ was historically developed to promote cooperation between \xclients,
+and security (\eg~isolation) of \xclients\ was not built into the design of the
+server. In the absence of isolation within the \xserver, malicious clients can
+compromise the integrity and privacy of other \xclients\ handled by the
+\xserver---well-documented instances of such attacks abound in the literature
+(\eg~\cite{ep91,ksv03,k04,w96a}). For example, in the \xserver, a malicious
+\xclient\ can easily compromise the privacy of other \xclients\ by snooping on
+their input, or by retrieving bitmaps of their windows~\cite{ksv03}. Similarly,
+it is easy to program a Trojan horse \xclient\ that registers with the
+\xserver\ to receive keystrokes sent to other \xclients\ connected to the
+\xserver~(\eg~the xkey application~\cite{xkey} does so in just $100$
+lines of C source code).
+
+As was the case with Linux, several security mechanisms have been developed to
+secure the \xserver\ (\eg~the X security extension~\cite{w96b}, and several
+solutions at the level of the X protocol~\cite{dru05,w96a}).  The goal of the
+X11/\selinux\ project~\cite{ksv03,w07} is to add a reference monitor interface
+to the \xserver\ that can be used to enforce policies on how \xclients\ access
+resources managed by the \xserver. This reference monitor is designed to
+interface to the security-enhanced Linux (\selinux) policy server~\cite{ksv03}.
+
+The central theme in both cases is to \textit{retrofit legacy software with a
+reference monitor}. Other recent efforts with similar objectives include
+retrofitting the Java Virtual Machine~\cite{f06}, the IBM Websphere
+software~\cite{hms06,s07} and IBM DB2~\cite{s07} with mechanisms to enforce
+\selinux\ authorization policies.  In addition to these examples, a tremendous
+amount of other legacy code exists that likely requires similar retrofitting,
+ranging from server applications (\eg~middleware~\cite{jdbc,odbc}, web
+servers~\cite{apache,iis}, Samba~\cite{samba}, game systems~\cite{games}, proxy
+and cache servers~\cite{squid}), to client applications that manage multiple
+information flows (\eg~email clients~\cite{ham06}, browsers and chat servers).  
+
+
+%==============================================================================
+\section{Current practice}
+\label{chapter:introduction:state-of-the-art}
+
+In current practice, legacy software is manually retrofitted with a reference
+monitor. We illustrate the steps involved in this process using the example in
+\figref{figure:introduction:motivating-example}. 
+
+This example shows a fragment of code from an API function \textsf{RequestAPI}
+of a hypothetical server application. This API function accepts two arguments,
+a \code{client} and a \code{target}, and performs security-sensitive operations
+on an internal resource \code{obj}, that is derived from \code{target}. This is
+reminiscent of, for instance, a user requesting a security-sensitive operation
+(\eg~\op{Read}, \op{Write}, \op{Append}) on a file via a system call---much as
+the system call internally translates the file into an inode before performing
+the operation on the actual data blocks representing the file, this API
+function translates \code{target} into \code{obj} by calling the function
+\textsf{GetData}. The lines with underlined comments must be retrofitted to
+ensure that security-sensitive operations are mediated by reference monitor
+calls.  Retrofitting proceeds in four steps, as discussed below.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{figure*}[ht!]
+%
+\begin{center}
+\newsavebox{\motivatingexample}
+\begin{lrbox}{\motivatingexample}
+\begin{minipage}[ht]{6.0in}
+\lstset{
+language=C,
+tabsize=4,
+basicstyle=\ttfamily\scriptsize,
+keywordstyle=\sffamily\bfseries,
+commentstyle=\rmfamily\emph\scriptsize,
+morekeywords={RequestAPI, GetSubjLabel, GetObjLabel, AuthHook, CheckPolicy},
+morecomment=[s][\rmfamily\bfseries\emph\scriptsize\underbar]{/**}{*/},
+escapeinside={/*@}{@*/}
+}
+\begin{lstlisting}[numbers=left, firstnumber=101]
+/* API function to process a request by client on target */
+void RequestAPI (client, target) {
+    struct object obj; /*@ \hfill @*/ /* Denotes the resource to protect accesses to */
+    Others x, y, z, subjlabel; /*@ \hfill @*/ /* Variable declarations */
+    ...
+    subjlabel = GetSubjLabel(client); /*@ \hfill @*/ /** Find subject label for client */ /*@ \label{line:motivating-example:getsublabel} @*/
+    obj = GetData(target); /*@ \hfill @*/ /* Get obj from target */
+    obj.label = GetObjLabel(target); /*@ \hfill @*/ /** Find object label for target */ /*@ \label{line:motivating-example:getobjlabel} @*/
+    x = obj.innocuous; /*@ \hfill @*/ /* Non-security-sensitive operation on obj */ /*@ \label{line:motivating-example:innocuous} @*/
+    if (AuthHook(subjlabel, obj.label)) { /*@ \hfill @*/ /** Reference monitor call */ /*@ \label{line:motivating-example:authhook} @*/
+        y = obj.secret; /*@ \hfill @*/ /* Security-sensitive operation to read secret data */ /*@ \label{line:motivating-example:secrecy} @*/
+        obj.integrity = z; /*@ \hfill @*/ /* Security-sensitive operation to write data */ /*@ \label{line:motivating-example:integrity} @*/
+    }
+    return;
+}
+\end{lstlisting}
+
+\begin{lstlisting}[numbers=left, firstnumber=201]
+/* Two reference monitor calls (CheckPolicy) in one authorization query */
+int AuthHook (sublabel, objlabel) {
+    QueryResults q1, q2; /*@ \hfill @*/ /* Variable declarations */
+
+    q1 = CheckPolicy(sublabel, objlabel, SecrecyOp); /*@ \hfill @*/ /** Query for line /*@\ref{line:motivating-example:secrecy}@*/ */ /*@ \label{line:motivating-example:secrecychk} @*/
+    q2 = CheckPolicy(sublabel, objlabel, IntegrityOp); /*@ \hfill @*/ /** Query for line /*@\ref{line:motivating-example:integrity}@*/ */ /*@ \label{line:motivating-example:integritychk} @*/
+    return q1 && q2; 
+}
+\end{lstlisting}
+\end{minipage}
+\end{lrbox}\fbox{\usebox{\motivatingexample}}
+\end{center}
+%
+\mycaption{Retrofitting legacy software with a reference monitor interface. 
+Lines with underlined comments must be retrofitted.}
+{\label{figure:introduction:motivating-example}}
+\end{figure*}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\begin{enumerate}
+
+\item \textbf{Subject/Object identification and labeling.} Each subject
+requesting a security-sensitive operation and each object that may be affected
+by the security-sensitive operation must be identified and labeled with a
+security identifier.  Subjects and objects are represented in the authorization
+policy using their labels, and the reference monitor uses these labels to
+determine whether a requested operation is permitted. 
+
+In current practice, the subjects and objects that are affected by a
+security-sensitive operation are determined manually. Their labels are
+bootstrapped using operating system support and are typically bound to the
+variables representing the subject and object, \eg~stored as a field in the C
+\code{struct} representing the subject and object
+variables~\cite{ksv03,hms06,hrj+07,f06}.  For example, the \selinux\ operating
+system~\cite{ls01a,m04} maintains security labels for each user and resource
+(\eg~files, sockets) that it manages. Thus, the functions shown in
+lines~\ref{line:motivating-example:getsublabel}
+and~\ref{line:motivating-example:getobjlabel}, that fetch the subject and
+object label, respectively, rely on the operating system to supply labels.  In
+the example in \figref{figure:introduction:motivating-example}, the object
+label is stored in the field \code{label} of \code{struct object}.  Note that
+the application itself may create new objects, in which case it must also label
+these objects appropriately. In current practice, the function calls to
+determine subject and object labels
+(lines~\ref{line:motivating-example:getsublabel}
+and~\ref{line:motivating-example:getobjlabel}) are placed manually.
+
+
+\item \textbf{Identifying security-sensitive operations.}
+Lines~\ref{line:motivating-example:innocuous},
+\ref{line:motivating-example:secrecy}
+and~\ref{line:motivating-example:integrity} show accesses to members of the
+variable \code{obj} of type \code{struct object}. In this example, \code{struct
+object} denotes the type of a resource that is managed by the application. One
+or more of these accesses may represent a \textit{security-sensitive
+operation}. Intuitively, a security-sensitive operation is a conceptual
+operation on a resource, such as a combination of structure-member accesses
+(\eg~a set of structure-member accesses), that achieves a high-level objective.
+For example, a combination of accesses to the inode structure in the Linux
+kernel that performs a file read will be classified as a security-sensitive
+operation.
+
+Whether a combination of structure member accesses indeed represents a
+security-sensitive operation or not is determined by site-specific security
+requirements. For this example, we assume that the structure member accesses in
+lines~\ref{line:motivating-example:secrecy}
+and~\ref{line:motivating-example:integrity} represent distinct
+security-sensitive operations (namely \op{SecrecyOp} and \op{IntegrityOp}),
+while the structure member access in
+line~\ref{line:motivating-example:innocuous} is not representative of any
+security-sensitive operation.
+
+In current practice, security-sensitive operations are determined manually.
+Typically, a team of security analysts reasons about the kinds of security
+policies that must be enforced by the software, and determines a set of
+resources and security-sensitive operations.  For instance, the LSM project
+identified $504$ distinct security-sensitive operations (such as
+\op{File\_Read}, \op{File\_Write}, \op{Dir\_Mkdir}, \op{Dir\_Rmdir}) on
+different resources, such as files, directories, sockets and shared memory,
+that the Linux kernel (version $2.4.21$) manages~\cite{ls01a,svs01,s05b}.
+Similarly, the X11/\selinux\ project identified $59$ distinct
+security-sensitive operations (such as \op{Window\_Create}, \op{Window\_Map})
+on resources such as windows, fonts and other resources that the \xserver\
+manages~\cite{ksv03}.
+
+It is important to note that security-sensitive operations are currently
+identified using \adhoc\ reasoning, \eg~by considering different security
+policies to be enforced, and \textit{not} by analyzing source code. As a result,
+the relationship between the security-sensitive operations so identified and
+the code that implements them is \textit{not} identified (\ie~the combination
+of structure member accesses that represents a security-sensitive operation is
+not identified). Thus, identifying where a security-sensitive operation happens
+in source code is currently a manual and \adhoc\ process.
+
+
+\item \textbf{Placing authorization queries.} Because the structure member
+access on line~\ref{line:motivating-example:secrecy} represents the
+security-sensitive operation \op{SecrecyOp}, it must be mediated by the
+reference monitor call shown on line~\ref{line:motivating-example:secrecychk}
+(in this case, the keyword \code{SecrecyOp} shown on
+line~\ref{line:motivating-example:secrecychk} is a constant that denotes a
+security-sensitive operation). Similarly, the structure member access on
+line~\ref{line:motivating-example:integrity} must be mediated by the reference
+monitor call on line~\ref{line:motivating-example:integritychk}.
+
+Both these objectives are achieved by calling the function \textsf{AuthHook} on
+line~\ref{line:motivating-example:authhook} with the subject \code{client} and
+object \code{obj} that are involved in the security-sensitive operation. The
+implementation of \textsf{AuthHook} is provided as part of the retrofitting
+process.  In this case, the function \textsf{AuthHook} consults the
+authorization policy (via the \textsf{CheckPolicy} function calls on
+lines~\ref{line:motivating-example:secrecychk}
+and~\ref{line:motivating-example:integritychk}) to check that both the
+security-sensitive operations \op{SecrecyOp} and \op{IntegrityOp} are allowed.
+They are thus either performed together, or are not performed at all.
+Finer-grained placement of authorization checks, that will allow individual
+checking of permissions for each of these security-sensitive operations is also
+possible, \eg~by placing the function call on
+line~\ref{line:motivating-example:secrecychk} guarding
+line~\ref{line:motivating-example:secrecy}, and the function call on
+line~\ref{line:motivating-example:integritychk} guarding
+line~\ref{line:motivating-example:integrity}, respectively. In this case, the
+programmer likely combined the checks for both these security-sensitive
+operations because of one of three reasons:
+
+\begin{itemize}
+%
+\item The site-specific policy demands that both \op{SecrecyOp} and
+\op{IntegrityOp} be performed together, or not at all. In this case, it can be
+argued that these security-sensitive operations instead be combined into a
+single security-sensitive operation, called \op{SecrecyAndIntegrityOp}, that is
+identified in code by a read of the \code{secret} field and a write of the
+\code{integrity} field of a variable of type \code{struct object}. The
+site-specific policy must also be rewritten to express policies for this
+security-sensitive operation.
+%
+\item \op{SecrecyOp} and \op{IntegrityOp} are performed together at several
+locations in code, and the programmer combined the checks for these operations
+as an optimization (at the cost of a conservative authorization check).
+%
+\item This was unintended, and the programmer instead meant to check for
+\op{SecrecyOp} and \op{IntegrityOp} separately.
+%
+\end{itemize}
+
+In current practice, locating security-sensitive operations in source code, and
+placing authorization queries to mediate them is a manual and \adhoc\ process.
+
+
+\item \textbf{Writing an authorization policy.} The final component of the
+retrofitting process is to write an appropriate authorization policy that
+satisfies site-specific security goals. Abstractly, an authorization policy is
+a set of triples
+\triple{\subjlab{Subject-label}}{\subjlab{Object-label}}{\op{Operation}} that
+determines the set of security-sensitive operations that a subject with label
+\subjlab{Subject-label} can perform on on an object with label
+\subjlab{Object-label}. The \textsf{CheckPolicy} function calls on
+lines~\ref{line:motivating-example:secrecychk}
+and~\ref{line:motivating-example:integritychk} consult the authorization policy
+and determine whether the requested operation should be permitted (and return a
+non-zero value if permitted). 
+
+Because policies are determined by site-specific security goals, in current
+practice, they are written and maintained manually. Several off-the-shelf
+tools, such as the Tresys \selinux\ policy management
+toolkit~\cite{tresys1,tresys2}, are now available to manage and interface with
+authorization policies.
+
+\end{enumerate}
+
+As this example illustrates, retrofitting legacy code with a reference monitor
+is currently an \adhoc, manual process. Thus, it is both
+\textit{time-consuming} and \textit{error-prone}. For example, in spite of all
+the prior work put into several security patches for the Linux
+kernel~\cite{argus,grsecurity,rsbac,nsa,apparmor,lids}, it still took over two
+years to integrate the LSM framework into the mainline Linux kernel, and a
+number of bugs (\eg~showing violation of the Principle of Complete
+Mediation~\cite{ss75}) were found and fixed along the way~\cite{jez04,zej02}.
+Similarly, despite an initial implementation in 2003, the work of integrating a
+reference monitor interface into the \xserver\ is still ongoing. Part of this
+is due to changes in developers and the challenges of implementing a trusted
+path for the user~(as outlined in several prior papers on secure windowing
+systems~\cite{bpw+90,e90,emo+93,ep91,mpr06}), but recent work is still
+addressing fundamental issues, such as subject/object labeling and design of
+the query interface to the reference monitor~\cite{w07}.
+
+              
+%==============================================================================
+\section{Contributions}
+\label{chapter:introduction:contributions}
+
+This dissertation develops techniques to automate the hitherto \adhoc, manual
+process of retrofitting legacy software with a reference monitor.  The thesis
+that this dissertation supports is the following:
+
+\begin{center}
+\newsavebox{\thesisstatement}
+\begin{lrbox}{\thesisstatement}
+\begin{minipage}[ht]{6.0in}
+\textbf{Program analysis and transformation techniques offer a
+principled and automated way to retrofit legacy software with mechanisms 
+for authorization policy enforcement}
+\end{minipage}
+\end{lrbox}\fbox{\usebox{\thesisstatement}}
+\end{center}
+
+This dissertation supports the above thesis by making the following
+contributions:
+
+\begin{enumerate}
+
+\item \textbf{Fingerprints.} It introduces a new formalism, called
+\textit{fingerprints}, to represent security-sensitive operations.  A
+fingerprint represents a security-sensitive operation using a set of
+\textit{code patterns} that represent how a resource must be accessed to
+perform that operation. Thus, a fingerprint implicitly embodies the
+relationship between a security-sensitive operation and the code that embodies
+this operation.
+
+\item \textbf{Fingerprint mining algorithms.} It presents static and dynamic
+program analysis algorithms to automatically mine fingerprints for
+security-sensitive operations. The dynamic program analysis algorithm uses a
+novel \textit{trace localization technique} that uses side-effects to localize
+fingerprints in program traces. The static program analysis algorithm makes
+novel use of a hierarchical clustering technique called \textit{concept
+analysis} to mine fingerprints.  
+
+Fingerprint mining algorithms remove the manual burden associated with Step~(2)
+of the retrofitting process, discussed in
+\sectref{chapter:introduction:state-of-the-art}.
+
+\item \textbf{Fingerprint matching algorithms.} It presents a
+\textit{fingerprint matching algorithm} that statically matches the fingerprint
+of a security-sensitive operation against source code and identifies all
+locations where the operation is performed. In conjunction with a program
+transformation tool that places authorization queries, this algorithm
+automatically retrofits legacy software with a reference monitor. It also
+presents heuristics to identify the subject and object involved in a
+security-sensitive operation. 
+
+Fingerprint matching algorithms thus ameliorate the manual burden associated
+with Steps~(1) and~(3) of the retrofitting process from
+\sectref{chapter:introduction:state-of-the-art}.
+
+\item \textbf{Case studies on real-word software.} This dissertation presents
+case studies on three real-world software systems---the \ext\ file system from
+Linux, the \xserver, and the PennMUSH multi-user dungeon~\cite{games}. The case
+studies on \ext\ and \xserver\ directly compare the results of applying the
+algorithms developed in this dissertation against the results obtained by
+manually retrofitting these systems (as was done in the LSM and the
+X11/\selinux\ projects, respectively), while the case study on PennMUSH
+presents the applicability of these algorithms on a system that has as yet not
+been manually retrofitted with a reference monitor.
+
+\end{enumerate}
+
+Techniques to help with Step~(4) from
+\sectref{chapter:introduction:state-of-the-art}, namely, writing authorization
+policies, are a subject of several past and ongoing research projects, and not 
+considered in this dissertation. 
+
+
+%==============================================================================
+\section{Structure of this dissertation} 
+\label{chapter:introduction:structure}
+%
+This dissertation is organized as follows.  \chapref{chapter:overview} presents
+a high-level overview of our approach and states the assumptions underlying our
+work.  \chapref{chapter:fingerprints} introduces fingerprints.
+\chapref{chapter:dynamic} presents an algorithm to mine fingerprints from
+runtime execution traces of a program and shows its application to the
+\xserver.  \chapref{chapter:static} presents a static program analysis-based
+fingerprint mining algorithm that overcomes several shortcomings of the dynamic
+program analysis-based algorithm. It also presents the application of this
+algorithm to the \ext\ file system, the \xserver\ and PennMUSH.
+\chapref{chapter:matching} presents an algorithm to match fingerprints against
+source code and place reference monitor checks.  \chapref{chapter:relatedwork}
+presents related research and \chapref{chapter:conclusions} concludes with
+directions for future work.
+%
+
+%==============================================================================
+\section{Bibliographic attributions}
+\label{chapter:introduction:biblio}
+
+Most of the material presented in this dissertation has appeared in conference
+papers.
+
+\begin{itemize}
+
+\item Parts of \chapref{chapter:fingerprints} and \chapref{chapter:matching}
+appeared in Proceedings of the 12$^{th}$ ACM Conference on Computer and
+Communications Security (Alexandria, Virginia, November 2005)~\cite{gjj05} as
+joint work with T.~Jaeger and S.~Jha. This paper introduced fingerprints, and
+presented an algorithm to match fingerprints against source code.
+
+\item Parts of \chapref{chapter:overview}, \chapref{chapter:dynamic} and
+\chapref{chapter:matching} appeared in Proceedings of the 27$^{th}$ IEEE
+Symposium on Security and Privacy (Berkeley/Oakland, California, May
+2006)~\cite{gjj06} as joint work with T.~Jaeger and S.~Jha. This paper
+presented a dynamic fingerprint mining algorithm and applied it to the
+\xserver.
+
+\item Parts of \chapref{chapter:static} appeared in Proceedings of the
+27$^{th}$ International Conference on Software Engineering (Minneapolis,
+Minnesota, May 2007)~\cite{gkj+07} as joint work with D.~King, T.~Jaeger and
+S.~Jha. This paper presented a static fingerprint mining algorithm using
+concept analysis and applied it to the \ext\ file system, the \xserver, and
+PennMUSH.
+
+\end{itemize}
+

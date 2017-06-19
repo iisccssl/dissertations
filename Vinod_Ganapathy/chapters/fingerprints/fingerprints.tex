@@ -1,0 +1,251 @@
+\chapter{Fingerprints}
+\label{chapter:fingerprints}
+
+This chapter introduces fingerprints---the representation used by our approach
+for security-sensitive operations. As outlined in \chapref{chapter:overview},
+fingerprints are matched against source code to locate security-sensitive
+operations and are thus central to our approach.
+
+A server receives and processes client requests to access and modify the
+resources that it manages. Each such client request may perform one or more
+security-sensitive operations on the resource, each of which must be mediated
+by an authorization policy lookup. For example, an \xclient's request to map
+the child windows of a window \code{pParent} using a call to
+\code{MapSubWindows} (see \figref{figure:mapsubwindows}) results in the
+security-sensitive operations of enumerating the children of \code{pParent}
+(denoted by \op{Window\_Enumerate}) and that of mapping each of the child
+windows onto the screen (denoted by \op{Window\_Map}). Each such
+security-sensitive operation can have one or more \textit{fingerprints}, 
+where each fingerprint denotes the resource accesses needed to perform that
+security-sensitive operation.
+
+
+%------------------------------------------------------------------------------
+\section{Syntax}
+\label{chapter:fingerprints:syntax}
+
+The syntax of a fingerprint of a security-sensitive operation \op{OP} is as
+defined in \figref{figure:fingerprint-definition}. A fingerprint is a rule,
+where the left-hand-side of the rule is the name of a security-sensitive
+operation, \op{OP}, and the right hand side of the rule is a conjunction
+of one or more \textit{code patterns} (also called \textit{code templates})
+or their negations.
+
+%------------------------------------------------------------------------------
+\begin{figure}[ht!]
+\begin{center}
+\begin{tabular}{|r c l|}
+%
+\hline
+\bnfnterm{Fingerprint} 
+  & ::== & 
+  \op{OP} :- ($\displaystyle\bigwedge_{i=1}^{n}$$_{Intra}$ \bnfnterm{CP$_i$})
+  \textit{Subject to} \bnfnterm{Conditions}\\
+%
+  & & $|$ 
+  \op{OP} :- ($\displaystyle\bigwedge_{i=1}^{n}$$_{Inter}$ \bnfnterm{CP$_i$})
+  \textit{Subject to} \bnfnterm{Conditions}\\
+%  
+\bnfnterm{CP} 
+  & ::== & 
+  \bnfnterm{Code-Pattern}  $|$ $\neg$\bnfnterm{Code-Pattern}\\
+%
+\bnfnterm{Condition}
+  & ::== & 
+  \textit{Same}(\bnfnterm{Code-Pattern}$_i$, \bnfnterm{Code-Pattern}$_j$)\\
+% 
+  & & $|$
+  \textit{Different}(\bnfnterm{Code-Pattern}$_i$, \bnfnterm{Code-Pattern}$_j$)\\
+% 
+\bnfnterm{Conditions}
+  & ::== & 
+  \bnfnterm{Condition} $\wedge$ \bnfnterm{Conditions} $|$ True\\
+%
+\bnfnterm{Code-Pattern} 
+  & ::== &
+  \textit{Write} \bnfnterm{Value} \textit{To} \bnfnterm{AST}\\
+%
+  & & $|$
+  \textit{Read} \bnfnterm{AST}\\
+%
+  & & $|$
+  \textit{Call} \bnfnterm{AST}\\
+%
+  & & $|$
+  \textit{CallWith} \bnfnterm{AST} (\bnfnterm{Value}, \bnfnterm{Value}, $\ldots$)\\ 
+%
+  & & $|$
+  \bnfnterm{BinaryRelation} (\bnfnterm{AST}, \bnfnterm{AST})\\
+%
+  & & $|$
+  \bnfnterm{BinaryRelation} (\bnfnterm{AST}, \bnfnterm{Value})\\
+%
+  & & $|$
+  \bnfnterm{UnaryRelation} (\bnfnterm{AST})\\
+%
+\bnfnterm{AST} 
+  & ::== &
+  (\textit{type-name}\texttt{->})$^\texttt{+}$\textit{fieldname}$^\texttt{*}$\\
+%
+\bnfnterm{Value}
+  & ::== &
+  \unk (unknown) $|$ \textit{constant}\\ 
+%
+  & & $|$
+  \textit{Binary Arithmetic Operator} (\bnfnterm{Value}, \bnfnterm{Value})\\
+%
+\bnfnterm{BinaryRelation} & ::== & $\neq$ $|$ $==$\\
+%
+\bnfnterm{UnaryRelation} & ::== & \textit{Decrement} $|$ \textit{Increment}\\
+\hline
+\end{tabular}
+\end{center}
+\mycaption{BNF grammar defining fingerprints.  The symbol \op{OP} in the
+definition of \bnfnterm{Fingerprint} denotes the name of a security-sensitive
+operation. Note that an abstract syntax tree (AST) representing a resource
+access is represented using data types, denoting the data type of the resource
+being accessed.}
+{\label{figure:fingerprint-definition}}
+\end{figure}
+%------------------------------------------------------------------------------
+
+A code pattern is a \textit{Read}, \textit{Write} or \textit{Call} operation on
+a resource; the resource is represented in the code pattern as an abstract
+syntax tree (AST). In this dissertation, we restrict ourselves to the analysis
+of C source code, and assume that resources are represented as C structures
+(\code{struct}s). The ASTs in code patterns thus represent accesses to fields
+of data types representing resources.  A few simple extensions of the above
+operations are also included in the definition of a code pattern,
+\eg~\textit{CallWith}, which denotes a \textit{Call} with constraints on actual
+parameters, and simple binary and unary relations, such as tests for equality
+and disequality, and the increment and decrement operator.
+
+We make the following observations on the syntax of fingerprints.
+
+\begin{enumerate}
+
+\item 
+Resources are expressed in fingerprints using data types, rather than
+individual variable names. This decision was motivated by two considerations.
+
+First, specifying resources using data types makes a fingerprint easy to write.
+A security-sensitive operation can simply be expressed in terms of the data
+types of the resources that it manipulates. Each piece of code that matches
+this fingerprint (as described in \chapref{chapter:matching}) performs this
+fingerprint. Second, using data types for resources relieves the matching
+algorithm from having to use precise alias information. The matching algorithm
+instead abstracts each variable in the program to its data type before checking
+for a match. The matching algorithm is thus conservative---it may return
+spurious matches (\ie~false positives), but will never miss a piece of code
+that matches a fingerprint (\ie~false negatives). A false negative means that
+an authorization check is not placed where it should be, thus resulting in a
+potentially exploitable security hole.
+
+\item 
+Even though resources are expressed in terms of data types, we have found that
+in some cases further constraints on code patterns in a fingerprint improves
+the precision of matching. The syntax of fingerprints allows \textit{Same} and
+\textit{Different} constraints that can be used to restrict the code fragments
+that match a fingerprint. For example, in the fingerprint for
+\op{Window\_Enumerate} shown below, the \textit{Different} constraint mentions
+that the variable of type \op{WindowPtr} that matches the first code pattern
+must be different from the variable that matches the second code pattern.
+
+\begin{center}
+\begin{tabular}{|r l|}
+\hline
+\op{Window\_Enumerate} :- 
+  & \textit{Read}~\code{WindowPtr$_1$->firstChild}\\
+	& $\wedge$ \textit{Read}~\code{WindowPtr$_2$->nextSib}\\
+	& $\wedge$ \code{WindowPtr $\neq$ 0} \textit{Subject to}\\
+	& \textit{Different}(\code{WindowPtr$_1$}, \code{WindowPtr$_2$})\\\hline
+\end{tabular}
+\end{center}
+
+Note, however, that to avoid false negatives, precise alias information must be
+used if such constraints are used in fingerprints. For example,
+\textit{Same}(\code{WindowPtr$_1$}, \code{WindowPtr$_2$}) is a constraint that
+restricts \code{WindowPtr$_1$} and \code{WindowPtr$_2$} to be the same,
+\ie~point to the same resource. Alias information is needed to resolve this
+constraint precisely. 
+
+\item
+Fingerprints can either be specified as \textit{intraprocedural} or
+\textit{interprocedural} (represented in \figref{figure:fingerprint-definition}
+using $\wedge_{Intra}$ and $\wedge_{Inter}$, respectively). The matching
+algorithm described in \chapref{chapter:matching} matches intraprocedural
+fingerprints against code contained in a procedure, while it matches
+interprocedural fingerprints against code contained in all procedures in the
+program being analyzed. In most cases in our experiments, however, we found
+that intraprocedural fingerprints were sufficient to represent
+security-sensitive operations.
+
+\item 
+Finally, we note that temporal ordering information cannot be expressed using
+the syntax of fingerprints shown in \figref{figure:fingerprint-definition}.
+Thus, we cannot express fingerprints to represent the rule ``Read
+\code{WindowPtr->firstChild} before reading \code{WindowPtr->nextSib}''. While
+the simpler fingerprint language results in simpler, more intuitive fingerprint
+mining algorithms, the inability to express temporal ordering information is a
+limitation, which can potentially result in false positives in the output of
+the matching algorithm.
+
+However, in our experiments (described in \chapref{chapter:matching}), we found
+that the number of false positives was manageable. For example, in our analysis
+of the \xserver, we found that one source of false positives was the
+\op{Window\_Enumerate} fingerprint. The fingerprint for this security-sensitive
+operation only approximates linked-list traversal, and thus triggers spurious
+matches. In particular, out of $20$ locations that were output by the matching
+algorithm as performing \op{Window\_Enumerate}, only $10$ did.
+
+Extending the fingerprint language to include temporal information is a topic
+for future work. Existing tools, such as MOPS~\cite{cw02} and
+\code{xgcc}~\cite{hcx+02}, already employ algorithms to match such temporal
+patterns and our work can benefit directly from these tools. Note, however,
+that mining temporal fingerprints requires designing more sophisticated
+algorithms than those developed in this dissertation. 
+
+\end{enumerate}
+
+
+%------------------------------------------------------------------------------
+\section{Interpretation}
+\label{chapter:fingerprints:meaning}
+
+The fingerprint of a security-sensitive operation \op{OP} represents the
+resource accesses needed to perform that operation. Thus, the effect that
+a security-sensitive operation has on a resource is defined by the resource
+accesses in its fingerprint.
+
+Using the above interpretation, however, the fingerprint of a
+security-sensitive operation \op{OP} must contain all the resource accesses
+needed to perform that operation on the resource. For example, one fingerprint
+for the operation \op{Window\_Map} of the \xserver, which represents mapping a
+window onto the screen, is \textit{Call}~\code{MapWindow}, or alternatively,
+the set of statements that implements \code{MapWindow}.  Expressing
+fingerprints with \textit{all} the resource accesses needed to perform an
+operation is certainly acceptable, but makes the fingerprint ineffective in the
+presence of even minor changes to the source code of the server. 
+
+As a result, we typically express fingerprints using only the set of resource
+accesses that suffice to differentiate one security-sensitive operation from
+another. For example, we found that the following fingerprint suffices to
+precisely identify all locations in the \xserver\ that perform
+\op{Window\_Map}:
+
+\begin{center}
+\begin{tabular}{|r l|}
+\hline
+\op{Window\_Map} :-
+& \textit{Write} \code{True} \textit{To} \code{WindowPtr->mapped} $\wedge$ \\
+& \textit{Write} \code{MapNotify} \textit{To} \code{xEvent->union->type}\\
+\hline
+\end{tabular}
+\end{center}
+
+The problem of expressing fingerprints at an appropriate granularity that
+precisely represents security-sensitive operations is referred to by Erlingsson
+as \textit{security event synthesis}~\cite[Pages 73--82]{e04}. This is the
+subject of the next two chapters, which develop \textit{mining} algorithms to
+extract fingerprints by analyzing source code.
+

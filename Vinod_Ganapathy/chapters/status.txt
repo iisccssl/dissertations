@@ -1,0 +1,9 @@
+                 Solomon        Horwitz          Swift          Somesh
+Introduction        X              X               X              X
+Overview            X              X               X              X
+Fingerprints                       X
+Dynamic                            X
+Static                             X
+Matching                           X
+Relatedwork                        X
+Futurework                         X

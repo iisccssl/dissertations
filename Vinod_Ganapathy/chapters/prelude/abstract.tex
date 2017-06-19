@@ -1,0 +1,34 @@
+Research in computer security has historically advocated Design for Security,
+the principle that security must be proactively integrated into the design of a
+system. While examples exist in the research literature of systems that have
+been designed for security, there are few examples of such systems deployed in
+the real world. Economic and practical considerations force developers to
+abandon security and focus instead on functionality and performance, which are
+more tangible than security. As a result, large bodies of legacy code often
+have inadequate security mechanisms.  Security mechanisms are added to legacy
+code on-demand using ad hoc and manual techniques, and the resulting systems
+are often insecure.
+
+This dissertation advocates the need for techniques to retrofit systems with
+security mechanisms. In particular, it focuses on the problem of retrofitting
+legacy code with mechanisms for authorization policy enforcement. It introduces
+a new formalism, called fingerprints, to represent security-sensitive
+operations. Fingerprints are code templates that represent accesses to
+security-critical resources, and denote key steps needed to perform operations
+on these resources. This dissertation develops both fingerprint mining and
+fingerprint matching algorithms.
+
+Fingerprint mining algorithms discover fingerprints of security-sensitive
+operations by analyzing source code. This dissertation presents two novel
+algorithms that use dynamic program analysis and static program analysis,
+respectively, to mine fingerprints. The fingerprints so mined are used by the
+fingerprint matching algorithm to statically locate security-sensitive
+operations. Program transformation is then employed to statically modify source
+code by adding authorization policy lookups at each location that performs a
+security-sensitive operation.
+
+The techniques developed in this dissertation have been applied to three
+real-world systems. These case studies demonstrate that techniques based upon
+program analysis and transformation offer a principled and automated
+alternative to the ad hoc and manual techniques that are currently used to
+retrofit legacy software with security mechanisms.

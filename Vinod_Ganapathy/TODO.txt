@@ -1,0 +1,8 @@
+Introduction:
+1. How much new code added to the OpenSSH system?
+2. Read Hydra.
+3. Read the Karger and Schell paper.
+4. Read the Graham Denning paper.
+5. Fix references.
+
+6. Some comments on where the dynamic technique will be useful.
